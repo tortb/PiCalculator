@@ -55,7 +55,12 @@ public class StreamingDivision {
                 String quotientStr = quotient.toString();
                 if (quotientStr.length() < chunkSize) {
                     // 如果商的位数不足，前面补零
-                    quotientStr = String.format("%0" + chunkSize + "d", Long.parseLong(quotientStr));
+                    StringBuilder sb = new StringBuilder();
+                    for (int i = 0; i < chunkSize - quotientStr.length(); i++) {
+                        sb.append('0');
+                    }
+                    sb.append(quotientStr);
+                    quotientStr = sb.toString();
                 }
 
                 // 截取我们需要的位数
@@ -77,7 +82,8 @@ public class StreamingDivision {
                 // 定期刷新以确保数据写入磁盘
                 if (digitsWritten % 100000 == 0) {
                     writer.flush();
-                    System.out.println("已计算 " + digitsWritten + " 位");
+                    int progress = digitsWritten * 100 / totalDigits;
+                    System.out.printf("      ✓ 已输出 %d 位 (%d%%)%n", digitsWritten, progress);
                 }
             }
 
@@ -149,7 +155,12 @@ public class StreamingDivision {
                 String quotientStr = quotient.toString();
                 if (quotientStr.length() < chunkSize) {
                     // 如果商的位数不足，前面补零
-                    quotientStr = String.format("%0" + chunkSize + "d", Long.parseLong(quotientStr));
+                    StringBuilder sb = new StringBuilder();
+                    for (int i = 0; i < chunkSize - quotientStr.length(); i++) {
+                        sb.append('0');
+                    }
+                    sb.append(quotientStr);
+                    quotientStr = sb.toString();
                 }
 
                 // 截取我们需要的位数
@@ -171,7 +182,8 @@ public class StreamingDivision {
                 // 定期刷新以确保数据写入磁盘
                 if (digitsWritten % 100000 == 0) {
                     writer.flush();
-                    System.out.println("已计算 " + digitsWritten + " 位");
+                    int progress = digitsWritten * 100 / totalDigits;
+                    System.out.printf("      ✓ 已输出 %d 位 (%d%%)%n", digitsWritten, progress);
                 }
             }
 
