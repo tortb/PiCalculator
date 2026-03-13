@@ -103,24 +103,29 @@ public class PiCalculator {
 
         // 预计算常量
         BigDecimal basePower = new BigDecimal("640320").pow(3);
-        
+
         // 缓存阶乘结果
         BigDecimal[] factorialCache = new BigDecimal[iterations * 6 + 1];
         factorialCache[0] = BigDecimal.ONE;
 
         long startTime = System.currentTimeMillis();
         long lastLogTime = startTime;
+        int lastLoggedPercent = -1; // 上次显示的进度百分比
 
         for (int k = 0; k < iterations; k++) {
             BigDecimal term = calculateTerm(k, basePower, factorialCache);
             sum = sum.add(term, mathContext);
 
-            // 每秒显示一次进度
+            // 实时显示进度：每 1% 或每秒至少更新一次
+            int currentPercent = (int) ((k + 1L) * 100 / iterations);
             long currentTime = System.currentTimeMillis();
-            if (currentTime - lastLogTime >= 1000) {
-                log("进度：" + (k * 100 / iterations) + "% (" + k + "/" + iterations + 
+            
+            // 当进度百分比变化或距离上次日志超过 1 秒时更新
+            if (currentPercent != lastLoggedPercent || currentTime - lastLogTime >= 1000) {
+                log("进度：" + currentPercent + "% (" + (k + 1) + "/" + iterations +
                     ") 耗时：" + formatTime(currentTime - startTime));
                 lastLogTime = currentTime;
+                lastLoggedPercent = currentPercent;
             }
         }
 
@@ -144,6 +149,8 @@ public class PiCalculator {
         long startTime = System.currentTimeMillis();
         AtomicInteger completedTasks = new AtomicInteger(0);
         AtomicInteger totalIterationsCompleted = new AtomicInteger(0);
+        AtomicInteger lastLoggedPercent = new AtomicInteger(-1); // 上次显示的进度百分比
+        Object logLock = new Object(); // 日志同步锁
 
         for (int t = 0; t < threadCount; t++) {
             int start = t * chunkSize;
@@ -162,21 +169,32 @@ public class PiCalculator {
                     long taskStartTime = System.currentTimeMillis();
                     long lastLogTime = taskStartTime;
                     int localCompleted = 0;
+                    int localLastLoggedPercent = -1;
 
                     for (int k = taskStart; k < taskEnd; k++) {
                         BigDecimal term = calculateTerm(k, basePower, factorialCache);
                         partialSum = partialSum.add(term, mathContext);
                         localCompleted++;
 
-                        // 每秒显示一次线程进度
+                        // 实时显示进度：每 1% 或每秒至少更新一次
+                        int globalCompleted = totalIterationsCompleted.get() + localCompleted;
+                        int currentPercent = (int) (globalCompleted * 100L / iterations);
                         long currentTime = System.currentTimeMillis();
-                        if (enableLogging && currentTime - lastLogTime >= 1000) {
-                            int globalCompleted = totalIterationsCompleted.addAndGet(localCompleted);
-                            int percent = (globalCompleted * 100) / iterations;
-                            log("进度：" + percent + "% (" + globalCompleted + "/" + iterations + ") 耗时：" + 
-                                formatTime(currentTime - startTime) + " [线程" + taskIndex + "]");
+                        
+                        if (enableLogging && (currentPercent != localLastLoggedPercent || 
+                            currentTime - lastLogTime >= 1000)) {
+                            synchronized (logLock) {
+                                // 再次检查避免重复日志
+                                int updatedGlobal = totalIterationsCompleted.get() + localCompleted;
+                                int updatedPercent = (int) (updatedGlobal * 100L / iterations);
+                                if (updatedPercent != lastLoggedPercent.get()) {
+                                    log("进度：" + updatedPercent + "% (" + updatedGlobal + "/" + iterations + ") 耗时：" +
+                                        formatTime(currentTime - startTime));
+                                    lastLoggedPercent.set(updatedPercent);
+                                }
+                            }
                             lastLogTime = currentTime;
-                            localCompleted = 0;
+                            localLastLoggedPercent = currentPercent;
                         }
                     }
 
