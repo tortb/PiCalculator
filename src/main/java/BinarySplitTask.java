@@ -55,7 +55,11 @@ public class BinarySplitTask extends RecursiveTask<Result> {
             BigInteger T = leftResult.T.multiply(rightResult.Q).add(leftResult.P.multiply(rightResult.T));
 
             if (enableCheckpoints && (b - a) > checkpointInterval) {
-                CheckpointManager.saveCheckpoint(b, new Result(P, Q, T));
+                // 对于大规模计算，只在关键节点保存检查点（减少 I/O 开销）
+                // 每 1000 个迭代才保存一次检查点
+                if ((b - a) % 1000 == 0) {
+                    CheckpointManager.saveCheckpoint(b, new Result(P, Q, T), false);
+                }
             }
 
             return new Result(P, Q, T);

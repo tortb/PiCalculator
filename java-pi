@@ -13,8 +13,8 @@ if [ $# -lt 1 ]; then
     echo "用法：java-pi <位数> [输出文件名]"
     echo ""
     echo "示例:"
-    echo "  java-pi 100          # 计算 100 位π"
-    echo "  java-pi 1000000      # 计算 100 万位π"
+    echo "  java-pi 100        # 计算 100 位"
+    echo "  java-pi 1000000    # 计算 100 万位"
     echo "  java-pi 1000000 out.md"
     echo ""
     echo "常用位数:"
@@ -39,7 +39,15 @@ fi
 
 # 自动检测系统可用内存
 get_available_memory() {
-    local avail=$(free -m | awk '/^Mem:/{print $7}')
+    local avail=$(free -m 2>/dev/null | awk '/^Mem:/{print $7}')
+    if [ -z "$avail" ] || [ "$avail" = "0" ]; then
+        local total=$(cat /proc/meminfo 2>/dev/null | grep MemTotal | awk '{print int($2/1024)}')
+        if [ -n "$total" ] && [ "$total" != "0" ]; then
+            avail=$((total / 2))
+        else
+            avail=2048
+        fi
+    fi
     echo $avail
 }
 

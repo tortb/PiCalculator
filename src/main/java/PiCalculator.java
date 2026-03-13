@@ -30,7 +30,7 @@ public class PiCalculator {
 
             // 清理资源
             engine.shutdown();
-            CheckpointManager.removeCheckpoint();
+            CheckpointManager.removeCheckpoint();  // 静默删除，不输出日志
 
         } catch (NumberFormatException e) {
             System.out.println("错误：请输入有效的数字作为位数");
@@ -56,6 +56,9 @@ public class PiCalculator {
         System.out.printf("║  并行线程：%d (CPU 核心数)%n", Runtime.getRuntime().availableProcessors());
         System.out.println("╚════════════════════════════════════════════════════════");
         System.out.println();
+        
+        // 重置检查点计数器
+        CheckpointManager.resetCounter();
 
         // 开始计算
         System.out.println("[1/3] 执行 Binary Splitting 并行计算...");

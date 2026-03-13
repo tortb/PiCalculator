@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # π计算器运行脚本
-# 用法: ./run.sh <位数> [输出文件名]
-# 示例: ./run.sh 1000000
+# 用法：./run.sh <位数> [输出文件名]
+# 示例：./run.sh 1000000
 #       ./run.sh 1000000 pi_result.md
 
 if [ $# -lt 1 ]; then
-    echo "用法: $0 <位数> [输出文件名]"
-    echo "示例: $0 1000000"
-    echo "示例: $0 1000000 pi_result.md"
+    echo "用法：$0 <位数> [输出文件名]"
+    echo "示例：$0 1000000"
+    echo "示例：$0 1000000 pi_result.md"
     exit 1
 fi
 
@@ -17,8 +17,17 @@ OUTPUT=$2
 
 # 自动检测系统可用内存并设置合适的 JVM 参数
 get_available_memory() {
-    # 获取可用内存 (MB)
-    local avail=$(free -m | awk '/^Mem:/{print $7}')
+    # 获取可用内存 (MB)，尝试多种方法
+    local avail=$(free -m 2>/dev/null | awk '/^Mem:/{print $7}')
+    if [ -z "$avail" ] || [ "$avail" = "0" ]; then
+        # 如果 free 命令失败，尝试从/proc/meminfo 读取
+        local total=$(cat /proc/meminfo 2>/dev/null | grep MemTotal | awk '{print int($2/1024)}')
+        if [ -n "$total" ] && [ "$total" != "0" ]; then
+            avail=$((total / 2))  # 假设使用一半内存
+        else
+            avail=2048  # 默认 2GB
+        fi
+    fi
     echo $avail
 }
 
@@ -27,10 +36,10 @@ calculate_heap_size() {
     local digits=$1
     local avail_mem=$2
     
-    # 基础内存 2GB
-    local base_mem=2048
+    # 基础内存 1GB
+    local base_mem=1024
     
-    # 根据位数估算额外内存需求 (每 100 万位约需 100MB)
+    # 根据位数估算额外内存 (每 100 万位约需 100MB)
     local extra_mem=$((digits / 1000000 * 100))
     
     # 计算所需内存
@@ -72,6 +81,7 @@ fi
 
 echo "可用内存：${AVAIL_MEM}MB, 分配堆内存：${HEAP_SIZE}MB"
 echo "正在计算π，位数：$DIGITS..."
+echo ""
 
 # 运行程序
 java $JAVA_OPTS -jar PiCalculator.jar $DIGITS $OUTPUT
