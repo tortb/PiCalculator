@@ -1,0 +1,6 @@
+#!/bin/bash
+# 高精度圆周率计算器启动脚本
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+java -jar "$SCRIPT_DIR/pi.jar" "$@"
