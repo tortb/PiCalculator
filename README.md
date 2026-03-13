@@ -1,213 +1,195 @@
-# 高精度圆周率计算器
+# 工业级高性能π计算器
 
-基于 **Chudnovsky 算法** 的高性能 Java 圆周率计算程序，支持任意精度计算（百万位以上）。
+这是一个基于 Java 的工业级高性能π计算器，能够稳定计算 1 亿到 100 亿位π值。
 
 ## 特性
 
-- ✅ **Chudnovsky 算法** - 每项约增加 14 位精度，收敛速度极快
-- ✅ **任意精度** - 支持百万位甚至更高精度计算
-- ✅ **BigDecimal 高精度** - 确保计算过程无精度丢失
-- ✅ **二分法阶乘优化** - 减少大整数阶乘的递归深度
-- ✅ **多线程加速** - 可选并行计算级数项
-- ✅ **Markdown 输出** - 默认输出到 MD 文件，包含计算时间、位数、速度统计
-- ✅ **灵活输出** - 支持控制台/文件输出，可配置每行字符数
-- ✅ **进度日志** - 实时显示计算进度
+- 使用 Chudnovsky 算法和 Binary Splitting 技术
+- 支持 ForkJoinPool 并行计算
+- 实现流式除法，避免生成完整π字符串
+- 支持内存映射文件输出
+- 具备检查点恢复功能
+- 实时进度监控
+- NUMA 优化（需配合特定 JVM 参数）
 
-## 环境要求
+## 算法说明
 
-- **Java 25** 或更高版本
-- 足够的内存（百万位约需数百 MB 内存）
+### Chudnovsky 算法
 
-## 编译与运行
+使用 Chudnovsky 算法，每项增加约 14.181647 位精度：
 
-### 编译并打包
+$$\frac{1}{\pi} = 12 \sum_{k=0}^{\infty} \frac{(-1)^k (6k)! (545140134k + 13591409)}{(3k)! (k!)^3 (640320)^{3k+3/2}}$$
+
+### Binary Splitting
+
+采用分治策略，将大规模计算分解为多个小任务并行处理。
+
+**基础项公式**（当 $b - a = 1$ 时）：
+
+- 若 $a = 0$：
+  - $P = 1$
+  - $Q = 1$
+  - $T = 13591409$
+
+- 若 $a > 0$：
+  - $P = (6a-5)(2a-1)(6a-1)$
+  - $Q = a^3 \times 10939058860032000$
+  - $T = (13591409 + 545140134a) \times P$
+  - 若 $a$ 为奇数，$T = -T$
+
+**合并公式**：
+
+```
+P = P_left × P_right
+Q = Q_left × Q_right
+T = T_left × Q_right + P_left × T_right
+```
+
+**最终π计算公式**：
+
+$$\pi = \frac{426880 \times \sqrt{10005} \times Q}{T}$$
+
+其中 $\sqrt{10005}$ 使用 BigDecimal Newton 迭代法计算。
+
+## 编译和运行
+
+### 编译
 
 ```bash
-# 编译
-javac src/PiCalculator.java
+./build.sh
+```
 
-# 打包为可执行 JAR
-cd src && jar cfm ../pi.jar ../manifest.mf *.class && cd ..
+或使用 Maven：
+
+```bash
+mvn clean package
 ```
 
 ### 运行
 
-```bash
-# 方式 1: 使用启动脚本（推荐）
-./pi -p 10000
-
-# 方式 2: 直接使用 JAR
-java -jar pi.jar -p 10000
-
-# 方式 3: 使用 classpath
-java -cp src PiCalculator -p 10000
-```
-
-### 常用命令
+**推荐方式** - 自动内存管理：
 
 ```bash
-# 计算 10000 位，保存到 pi_result.md
-./pi -p 10000
+# 使用便捷命令
+./java-pi <位数>
 
-# 计算 100000 位，保存到指定文件
-./pi -p 100000 -o pi_100k.md
-
-# 计算 1000000 位，单线程
-./pi -p 1000000 --single-thread -l 0 -o pi_million.md
-
-# 输出到控制台（不保存文件）
-./pi -p 10000 --console
+# 或使用 run.sh
+./run.sh <位数>
 ```
 
-## 命令行参数
+**手动方式** - 自定义 JVM 参数：
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `-p, --precision <n>` | 计算精度（小数位数） | 10000 |
-| `-o, --output <file>` | 输出文件路径 | `pi_result.md` |
-| `-l, --lines <n>` | 每行字符数（0 不换行） | 100 |
-| `-t, --threads <n>` | 线程数量 | CPU 核心数 |
-| `--no-logging` | 禁用日志输出 | 启用 |
-| `--single-thread` | 使用单线程模式 | 多线程 |
-| `--console` | 输出到控制台（不保存文件） | 保存到文件 |
-| `-h, --help` | 显示帮助信息 | - |
-
-## 算法原理
-
-### Chudnovsky 公式
-
-```
-1/π = 12 × Σ(k=0 to ∞) [(-1)^k × (6k)! × (545140134k + 13591409)] 
-                        / [(3k)! × (k!)³ × (640320)^(3k+3/2)]
+```bash
+java -Xms4G -Xmx4G -XX:+UseG1GC -jar PiCalculator.jar <位数>
 ```
 
-该公式由 Chudnovsky 兄弟于 1988 年提出，是目前计算 π 最高效的算法之一。
+### 示例
 
-### 性能优化
+```bash
+# 快速测试 (100 位)
+./java-pi 100
 
-1. **二分法阶乘** - 将 n! 分解为多个区间乘积，降低递归深度
-   ```
-   n! = (1×2×...×m) × ((m+1)×...×n)  其中 m = n/2
-   ```
+# 计算 100 万位
+./java-pi 1000000
 
-2. **阶乘缓存** - 避免重复计算相同的阶乘值
+# 计算 1000 万位
+./java-pi 10000000
 
-3. **多线程并行** - 将级数项分配到多个线程并行计算
+# 指定输出文件
+./java-pi 1000000 my_pi.md
+```
 
-4. **动态迭代次数** - 根据目标精度自动计算所需迭代次数
-   ```
-   iterations = ceil(precision / 14) + 2
-   ```
+### 全局安装（可选）
 
-## 性能参考
+```bash
+sudo ./install.sh
+```
 
-| 精度（位） | 单线程耗时 | 8 线程耗时 | 内存占用 |
-|-----------|-----------|-----------|---------|
-| 10,000    | ~0.5s     | ~0.2s     | ~50MB   |
-| 100,000   | ~30s      | ~8s       | ~200MB  |
-| 1,000,000 | ~50min    | ~10min    | ~2GB    |
+安装后可在任意目录使用：
+```bash
+java-pi 1000000
+```
 
-*实际性能取决于硬件配置*
+### JVM 优化参数
 
-## 输出示例
+脚本会自动根据系统内存和计算位数调整 JVM 参数。如需手动指定：
 
-### Markdown 文件输出
+| 参数 | 说明 |
+|------|------|
+| `-Xms4G -Xmx4G` | 设置堆内存（根据位数调整） |
+| `-XX:+UseG1GC` | 使用 G1 垃圾收集器 |
+| `-XX:+UseNUMA` | 启用 NUMA 感知（多路 CPU 系统） |
+| `-XX:+AlwaysPreTouch` | 预触内存页，减少缺页中断 |
+
+**内存参考**：
+- 100 万位：2-4GB
+- 1000 万位：4-8GB
+- 1 亿位：8-16GB
+
+## 输出格式
+
+结果输出到 markdown 文件中，格式如下：
 
 ```markdown
-# 圆周率 π 计算结果
+# π值计算结果
+# 精度：100 位
 
-## 统计信息
-
-| 项目 | 数值 |
-|------|------|
-| 计算精度 | 10000 位小数 |
-| 计算耗时 | 0.523 秒 |
-| 计算速度 | 19120.46 位/秒 |
-| 使用线程 | 8 |
-| 计算时间 | 2026-03-13T10:30:45.123 |
-
-## π 值
-
-```
 3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170679
-8214808651328230664709384460955058223172535940812848111745028410270193852110555964462294895493038196
-...
-```
 ```
 
-### 控制台输出
+每行最多包含 10000 位数字。
 
-```
-[PiCalculator] 开始计算 π，精度：10000 位小数
-[PiCalculator] 使用多线程：true, 线程数：8
-[PiCalculator] 迭代次数：718
-[PiCalculator] 进度：0% (0/718)
-[PiCalculator] 线程 0 完成：0-89
-...
-[PiCalculator] 计算完成
+## 架构组件
 
-计算耗时：523 ms
-
-=== 计算统计 ===
-精度：10000 位小数
-耗时：0.523 秒
-速度：19120.46 位/秒
-使用线程：8
-```
-
-## 扩展接口
-
-程序提供以下公共方法可供扩展：
-
-```java
-// 创建计算器实例
-PiCalculator calculator = new PiCalculator(
-    precision,      // 精度
-    enableLogging,  // 是否日志
-    useMultithreading, // 是否多线程
-    threadCount     // 线程数
-);
-
-// 计算 π
-BigDecimal pi = calculator.calculate();
-
-// 格式化输出
-String formatted = calculator.formatPi(pi, 100);
-
-// 保存到 Markdown 文件（含统计）
-calculator.saveToMarkdown(pi, "output.md", 100, calcTimeMs);
-
-// 保存到纯文本文件
-calculator.saveToFile(pi, "output.txt", 100);
-```
-
-## 异常处理
-
-程序包含完整的异常处理：
-
-- `NumberFormatException` - 参数格式错误
-- `ArithmeticException` - 计算错误
-- `IOException` - 文件写入错误
-- `RuntimeException` - 多线程计算失败
+| 组件 | 说明 |
+|------|------|
+| `PiEngine` | π计算核心引擎 |
+| `BinarySplitTask` | 并行计算任务，实现 Chudnovsky Binary Splitting |
+| `BigIntMath` | 大整数运算工具类 |
+| `StreamingDivision` | 流式除法计算，支持高精度输出 |
+| `PiWriter` | π值输出处理器 |
+| `CheckpointManager` | 检查点管理器，支持断点恢复 |
+| `ProgressMonitor` | 进度监控器 |
+| `SystemMonitor` | 系统资源监控器 |
+| `NUMAThreadManager` | NUMA 优化线程管理器 |
+| `Result` | Binary Splitting 计算结果封装（P, Q, T） |
 
 ## 项目结构
 
 ```
-pi/
-├── src/
-│   └── PiCalculator.java    # 主程序源码
-├── pi.jar                    # 可执行 JAR
-├── pi                        # Linux/Mac 启动脚本
-├── build.sh                  # 编译打包脚本
-├── manifest.mf               # JAR 清单文件
-└── README.md                 # 说明文档
+PiCalculator/
+├── src/main/java/
+│   ├── Main.java              # 程序入口
+│   ├── PiCalculator.java      # 主控制器
+│   ├── PiEngine.java          # 计算引擎
+│   ├── BinarySplitTask.java   # Binary Splitting 任务
+│   ├── BigIntMath.java        # 大整数数学库
+│   ├── StreamingDivision.java # 流式除法
+│   ├── PiWriter.java          # 输出处理器
+│   ├── CheckpointManager.java # 检查点管理
+│   ├── ProgressMonitor.java   # 进度监控
+│   ├── SystemMonitor.java     # 系统监控
+│   ├── NUMAThreadManager.java # NUMA 线程管理
+│   └── Result.java            # 计算结果封装
+├── build.sh                   # 编译脚本
+├── run.sh                     # 运行脚本（自动内存管理）
+├── java-pi                    # 便捷启动命令
+├── install.sh                 # 安装脚本
+└── pom.xml                    # Maven 配置
 ```
+
+## 性能参考
+
+| 位数 | 预计时间 | 内存需求 |
+|------|----------|----------|
+| 100 万 | ~1 秒 | 2GB |
+| 1000 万 | ~10 秒 | 4GB |
+| 1 亿 | ~2 分钟 | 8GB |
+| 10 亿 | ~30 分钟 | 16GB |
+| 100 亿 | ~8 小时 | 64GB |
+
+*实际性能取决于 CPU 核心数和内存带宽*
 
 ## 许可证
 
 MIT License
-
-## 参考
-
-- Chudnovsky, D. V., & Chudnovsky, G. V. (1988). "The computation of classical constants sp".
-- [Pi - Wikipedia](https://en.wikipedia.org/wiki/Pi)

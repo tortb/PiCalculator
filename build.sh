@@ -1,14 +1,26 @@
 #!/bin/bash
-# 编译并打包
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 编译Java项目
+echo "正在编译项目..."
+javac -d ./build -cp ".:./build/*" ./src/main/java/*.java
 
-echo "编译 Java 源文件..."
-javac "$SCRIPT_DIR/src/PiCalculator.java"
-
-echo "打包为可执行 JAR..."
-cd "$SCRIPT_DIR/src" && jar cfm ../pi.jar ../manifest.mf *.class
-
-echo "完成！使用方式:"
-echo "  ./pi -p 10000"
-echo "  java -jar pi.jar -p 10000"
+if [ $? -eq 0 ]; then
+    echo "编译成功！"
+    
+    # 创建jar包
+    echo "正在创建jar包..."
+    jar cfe PiCalculator.jar Main -C ./build .
+    
+    if [ $? -eq 0 ]; then
+        echo "jar包创建成功！"
+        echo "使用以下命令运行程序："
+        echo "java -Xms8G -Xmx16G -XX:+UseG1GC -XX:+UseNUMA -XX:+AlwaysPreTouch -jar PiCalculator.jar <位数>"
+        echo ""
+        echo "例如："
+        echo "java -Xms8G -Xmx16G -XX:+UseG1GC -XX:+UseNUMA -XX:+AlwaysPreTouch -jar PiCalculator.jar 1000000"
+    else
+        echo "创建jar包失败！"
+    fi
+else
+    echo "编译失败！"
+fi
