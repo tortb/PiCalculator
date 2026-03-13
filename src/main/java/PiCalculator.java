@@ -2,14 +2,17 @@ import java.io.IOException;
 import java.math.BigInteger;
 
 /**
- * 工业级π计算器主类
+ * HPC 优化版 π计算器主类
+ * 
+ * 优化点：
+ * 1. 详细进度显示 - 显示计算量、预计时间、速度
+ * 2. 内存监控 - 显示当前内存使用情况
+ * 3. 性能统计 - 显示各阶段耗时和计算速度
  */
 public class PiCalculator {
     public static void main(String[] args) {
         if (args.length < 1) {
-            System.out.println("用法：java PiCalculator <位数> [输出文件名]");
-            System.out.println("示例：java PiCalculator 1000000");
-            System.out.println("示例：java PiCalculator 1000000 pi_result.md");
+            printUsage();
             return;
         }
 
@@ -30,7 +33,7 @@ public class PiCalculator {
 
             // 清理资源
             engine.shutdown();
-            CheckpointManager.removeCheckpoint();  // 静默删除，不输出日志
+            CheckpointManager.removeCheckpoint();
 
         } catch (NumberFormatException e) {
             System.out.println("错误：请输入有效的数字作为位数");
@@ -41,36 +44,69 @@ public class PiCalculator {
     }
 
     /**
+     * 打印使用说明
+     */
+    private static void printUsage() {
+        System.out.println("╔════════════════════════════════════════════════════════");
+        System.out.println("║              HPC π 计算器 - 使用说明                    ");
+        System.out.println("╠════════════════════════════════════════════════════════");
+        System.out.println("║  用法：java -jar PiCalculator.jar <位数> [输出文件]    ");
+        System.out.println("║                                                        ");
+        System.out.println("║  示例:                                                 ");
+        System.out.println("║    java -jar PiCalculator.jar 1000       # 快速测试   ");
+        System.out.println("║    java -jar PiCalculator.jar 1000000    # 100 万位    ");
+        System.out.println("║    java -jar PiCalculator.jar 100000000  # 1 亿位      ");
+        System.out.println("║                                                        ");
+        System.out.println("║  JVM 参数建议:                                         ");
+        System.out.println("║    -Xms8G -Xmx16G     # 根据位数调整内存               ");
+        System.out.println("║    -XX:+UseG1GC       # 使用 G1 垃圾收集器             ");
+        System.out.println("║    -XX:+UseNUMA       # 启用 NUMA 优化（多路 CPU）      ");
+        System.out.println("║    -XX:+AlwaysPreTouch  # 预触内存页                   ");
+        System.out.println("╚════════════════════════════════════════════════════════");
+    }
+
+    /**
      * 计算π值并显示进度和时间
      */
     private static void calculateWithProgress(PiEngine engine, int digits, String outputFile) throws Exception {
         long startTime = System.currentTimeMillis();
         int iterations = digits / 14 + 1;
 
-        // 显示计算信息
+        // 显示内存信息
+        Runtime runtime = Runtime.getRuntime();
+        long maxMemory = runtime.maxMemory();
+        long totalMemory = runtime.totalMemory();
+        long freeMemory = runtime.freeMemory();
+
+        System.out.println();
         System.out.println("╔════════════════════════════════════════════════════════");
-        System.out.println("║                    π 值计算任务                         ");
+        System.out.println("║                    系统信息                            ");
         System.out.println("╠════════════════════════════════════════════════════════");
-        System.out.printf("║  目标精度：%d 位%n", digits);
-        System.out.printf("║  迭代次数：%d 次 (Chudnovsky 算法，每项~14.18 位)%n", iterations);
-        System.out.printf("║  并行线程：%d (CPU 核心数)%n", Runtime.getRuntime().availableProcessors());
+        System.out.printf("║  CPU 核心数：%d%n", runtime.availableProcessors());
+        System.out.printf("║  最大堆内存：%,d MB%n", maxMemory / (1024 * 1024));
+        System.out.printf("║  已分配内存：%,d MB%n", totalMemory / (1024 * 1024));
+        System.out.printf("║  空闲内存：%,d MB%n", freeMemory / (1024 * 1024));
         System.out.println("╚════════════════════════════════════════════════════════");
         System.out.println();
-        
-        // 重置检查点计数器
-        CheckpointManager.resetCounter();
 
         // 开始计算
         System.out.println("[1/3] 执行 Binary Splitting 并行计算...");
+        System.out.printf("      迭代范围：[0, %d)，共 %d 次迭代%n", iterations, iterations);
+        
         long splitStart = System.currentTimeMillis();
         Result result = engine.binarySplit(0, iterations);
         long splitEnd = System.currentTimeMillis();
         long splitTime = splitEnd - splitStart;
 
-        System.out.println("      ✓ Binary Splitting 完成，耗时：" + formatDuration(splitTime));
-        System.out.printf("      ✓ 计算结果：T 值 %d 位，Q 值 %d 位%n",
+        System.out.println("      ✓ Binary Splitting 完成");
+        System.out.printf("      ✓ 耗时：%s%n", formatDuration(splitTime));
+        System.out.printf("      ✓ 计算结果：T 值 %,d 位，Q 值 %,d 位%n",
             result.T.toString().length(),
             result.Q.toString().length());
+        
+        // 显示计算速度
+        double calcSpeed = iterations * 1000.0 / splitTime;
+        System.out.printf("      ✓ 计算速度：%.2f 次迭代/秒%n", calcSpeed);
         System.out.println();
 
         // 计算π值
@@ -91,25 +127,21 @@ public class PiCalculator {
         long piEnd = System.currentTimeMillis();
         long piTime = piEnd - piStart;
 
-        System.out.println("      ✓ π值计算完成，耗时：" + formatDuration(piTime));
+        System.out.println("      ✓ π值计算完成");
+        System.out.printf("      ✓ 耗时：%s%n", formatDuration(piTime));
         System.out.println();
 
         // 流式输出到文件
         System.out.println("[3/3] 流式输出到文件：" + outputFile);
         long writeStart = System.currentTimeMillis();
 
-        try {
-            StreamingDivision.streamPi(result.Q, result.T, digits, outputFile);
-        } catch (Exception e) {
-            System.err.println("      ✗ 文件写入失败：" + e.getMessage());
-            e.printStackTrace();
-            throw e;
-        }
+        StreamingDivision.streamPi(result.Q, result.T, digits, outputFile);
 
         long writeEnd = System.currentTimeMillis();
         long writeTime = writeEnd - writeStart;
 
-        System.out.println("      ✓ 文件写入完成，耗时：" + formatDuration(writeTime));
+        System.out.println("      ✓ 文件写入完成");
+        System.out.printf("      ✓ 耗时：%s%n", formatDuration(writeTime));
         System.out.println();
 
         // 总耗时
@@ -119,8 +151,16 @@ public class PiCalculator {
         System.out.println("╔════════════════════════════════════════════════════════");
         System.out.println("║                    计算完成 ✓                          ");
         System.out.println("╠════════════════════════════════════════════════════════");
+        System.out.printf("║  目标精度：%,d 位%n", digits);
         System.out.printf("║  总耗时：%s%n", formatDuration(totalTime));
-        System.out.printf("║  计算速度：%.2f 位/秒%n", digits * 1000.0 / totalTime);
+        System.out.printf("║  计算速度：%,.2f 位/秒%n", digits * 1000.0 / totalTime);
+        System.out.printf("║  阶段耗时:%n");
+        System.out.printf("║    - Binary Splitting: %s (%.1f%%)%n", 
+            formatDuration(splitTime), splitTime * 100.0 / totalTime);
+        System.out.printf("║    - π值计算：%s (%.1f%%)%n", 
+            formatDuration(piTime), piTime * 100.0 / totalTime);
+        System.out.printf("║    - 文件输出：%s (%.1f%%)%n", 
+            formatDuration(writeTime), writeTime * 100.0 / totalTime);
         System.out.printf("║  输出文件：%s%n", outputFile);
         System.out.println("╚════════════════════════════════════════════════════════");
     }
@@ -146,10 +186,7 @@ public class PiCalculator {
     }
 
     /**
-     * 计算π值并输出到文件
-     * @param digits 要计算的位数
-     * @param outputFile 输出文件名
-     * @throws Exception 计算过程中的异常
+     * 计算π值并输出到文件（兼容旧接口）
      */
     public static void calculateAndSavePi(int digits, String outputFile) throws Exception {
         PiEngine engine = new PiEngine();
