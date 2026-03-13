@@ -14,12 +14,15 @@ import java.nio.channels.FileChannel;
  * 3. 内存优化 - 不生成完整π字符串，边计算边输出
  * 4. 进度显示 - 每 10 万位显示一次进度
  * 5. 预分配缓冲区 - 减少内存分配开销
+ * 6. 可读性优化 - 每行 100 位数字，每 10 行一个大段，提高可读性
  */
 public class StreamingDivision {
-    // 输出配置
-    private static final int CHUNK_SIZE = 100000;  // 每次计算 100000 位
+    // 输出配置 - 优化可读性
+    private static final int CHUNK_SIZE = 100000;      // 每次计算 100000 位
     private static final int WRITE_BUFFER_SIZE = 1024 * 1024;  // 1MB 写入缓冲区
     private static final int PROGRESS_INTERVAL = 100000;  // 每 10 万位显示进度
+    private static final int CHARS_PER_LINE = 100;        // 每行 100 位（提高可读性）
+    private static final int LINES_PER_BLOCK = 10;        // 每 10 行一个空行分隔
     
     // 常量
     private static final BigInteger MULTIPLIER = new BigInteger("426880");
@@ -73,7 +76,7 @@ public class StreamingDivision {
             BigInteger remainder = divAndRemainder[1];
             int digitsWritten = 0;
             int lineCount = 0;
-            final int CHARS_PER_LINE = 10000;  // 每行 10000 位
+            int blockLineCount = 0;  // 当前块内的行数
 
             // 预分配 ByteBuffer（复用）
             ByteBuffer byteBuffer = ByteBuffer.allocate(CHUNK_SIZE + 1000);
@@ -97,19 +100,25 @@ public class StreamingDivision {
                     quotientStr = quotientStr.substring(0, totalDigits - digitsWritten);
                 }
 
-                // 写入缓冲区
-                byte[] bytes = quotientStr.getBytes();
-                byteBuffer.put(bytes);
-                
-                digitsWritten += bytes.length;
-                lineCount += bytes.length;
-
-                // 每行 10000 位换行
-                if (lineCount >= CHARS_PER_LINE) {
+                // 按行写入，每行 CHARS_PER_LINE 个字符
+                int pos = 0;
+                while (pos < quotientStr.length()) {
+                    int charsToWrite = Math.min(CHARS_PER_LINE, quotientStr.length() - pos);
+                    byteBuffer.put(quotientStr.substring(pos, pos + charsToWrite).getBytes());
                     byteBuffer.put((byte) '\n');
-                    lineCount = 0;
+                    
+                    pos += charsToWrite;
+                    digitsWritten += charsToWrite;
+                    lineCount++;
+                    blockLineCount++;
+                    
+                    // 每 LINES_PER_BLOCK 行插入一个空行
+                    if (blockLineCount >= LINES_PER_BLOCK) {
+                        byteBuffer.put((byte) '\n');
+                        blockLineCount = 0;
+                    }
                 }
-
+                
                 // 缓冲区满或达到进度间隔时刷新
                 if (byteBuffer.position() > WRITE_BUFFER_SIZE - CHUNK_SIZE || 
                     digitsWritten % PROGRESS_INTERVAL == 0) {
@@ -130,7 +139,7 @@ public class StreamingDivision {
                 byteBuffer.flip();
                 bos.write(byteBuffer.array(), 0, byteBuffer.limit());
             }
-            
+
             // 最后换行
             if (lineCount > 0) {
                 bos.write('\n');
@@ -179,7 +188,7 @@ public class StreamingDivision {
             BigInteger remainder = divAndRemainder[1];
             int digitsWritten = 0;
             int lineCount = 0;
-            final int CHARS_PER_LINE = 10000;
+            int blockLineCount = 0;
 
             while (digitsWritten < totalDigits) {
                 int chunkSize = Math.min(CHUNK_SIZE, totalDigits - digitsWritten);
@@ -192,17 +201,23 @@ public class StreamingDivision {
 
                 String quotientStr = formatQuotient(quotient, chunkSize);
 
-                if (quotientStr.length() > (totalDigits - digitsWritten)) {
-                    quotientStr = quotientStr.substring(0, totalDigits - digitsWritten);
-                }
-
-                writer.write(quotientStr);
-                digitsWritten += quotientStr.length();
-                lineCount += quotientStr.length();
-
-                if (lineCount >= CHARS_PER_LINE) {
+                // 按行写入
+                int pos = 0;
+                while (pos < quotientStr.length()) {
+                    int charsToWrite = Math.min(CHARS_PER_LINE, quotientStr.length() - pos);
+                    writer.write(quotientStr.substring(pos, pos + charsToWrite));
                     writer.newLine();
-                    lineCount = 0;
+                    
+                    pos += charsToWrite;
+                    digitsWritten += charsToWrite;
+                    lineCount++;
+                    blockLineCount++;
+                    
+                    // 每 LINES_PER_BLOCK 行插入一个空行
+                    if (blockLineCount >= LINES_PER_BLOCK) {
+                        writer.newLine();
+                        blockLineCount = 0;
+                    }
                 }
 
                 if (digitsWritten % PROGRESS_INTERVAL == 0) {
@@ -210,10 +225,6 @@ public class StreamingDivision {
                     int progress = digitsWritten * 100 / totalDigits;
                     System.out.printf("      ✓ 已输出 %d 位 (%d%%)%n", digitsWritten, progress);
                 }
-            }
-
-            if (lineCount > 0) {
-                writer.newLine();
             }
         }
     }
