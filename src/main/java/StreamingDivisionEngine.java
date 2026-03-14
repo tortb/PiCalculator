@@ -29,8 +29,11 @@ public class StreamingDivisionEngine {
     /** 写入缓冲区大小 - 1MB */
     private static final int BUFFER_SIZE = 1024 * 1024;
 
-    /** 进度显示间隔 - 每 10 万位 */
-    private static final int PROGRESS_INTERVAL = 100_000;
+    /** 每 2 万位显示一次进度（让输出更频繁） */
+    private static final int PROGRESS_INTERVAL = 20_000;
+
+    /** 进度输出时间间隔（毫秒）- 至少 1 秒输出一次 */
+    private static final long PROGRESS_TIME_INTERVAL = 1000;
 
     /** 每行输出的位数 */
     private static final int CHARS_PER_LINE = 100;
@@ -159,6 +162,7 @@ public class StreamingDivisionEngine {
             long digitsWritten = 0;
             int linePos = 0;
             int blockLines = 0;
+            long lastProgressTime = System.currentTimeMillis();
 
             while (digitsWritten < totalDigits) {
                 // 计算当前批次的实际大小
@@ -201,8 +205,10 @@ public class StreamingDivisionEngine {
                     }
                 }
 
-                // 进度显示（每 10 万位）
-                if (digitsWritten % PROGRESS_INTERVAL == 0) {
+                // 进度显示（每 50 万位 或至少 2 秒一次）
+                long currentTime = System.currentTimeMillis();
+                if (digitsWritten % PROGRESS_INTERVAL == 0 || 
+                    (currentTime - lastProgressTime) >= PROGRESS_TIME_INTERVAL) {
                     // 刷新缓冲区确保进度准确
                     if (writePos > 0) {
                         writer.write(writeBuf, 0, writePos);
@@ -210,7 +216,8 @@ public class StreamingDivisionEngine {
                     }
                     writer.flush();
 
-                    printProgress(digitsWritten, totalDigits, startTime);
+                    printProgress(digitsWritten, totalDigits, startTime, lastProgressTime);
+                    lastProgressTime = currentTime;
                 }
             }
 
@@ -232,19 +239,22 @@ public class StreamingDivisionEngine {
     /**
      * 打印进度信息
      */
-    private static void printProgress(long digitsWritten, long totalDigits, long startTime) {
-        long elapsedNanos = System.nanoTime() - startTime;
-        double elapsedSeconds = elapsedNanos / 1_000_000_000.0;
+    private static void printProgress(long digitsWritten, long totalDigits, long startTimeNanos, long lastProgressTime) {
+        long currentTimeNanos = System.nanoTime();
+        double elapsedSeconds = (currentTimeNanos - startTimeNanos) / 1_000_000_000.0;
         
+        // 计算上次进度以来的时间间隔（毫秒转秒）
+        double intervalSeconds = (System.currentTimeMillis() - lastProgressTime) / 1000.0;
+
         int progress = (int) (digitsWritten * 100 / totalDigits);
-        double speed = digitsWritten / elapsedSeconds;
-        
+        double speed = elapsedSeconds > 0.1 ? digitsWritten / elapsedSeconds : 0;
+
         // 估算剩余时间
-        double remainingSeconds = (totalDigits - digitsWritten) / speed;
+        double remainingSeconds = speed > 0 ? (totalDigits - digitsWritten) / speed : 999999;
         String remainingTime = formatRemainingTime(remainingSeconds);
 
-        System.out.printf("           ✓ 已输出 %12d 位 (%3d%%) | 速度 %.0f 位/秒 | 剩余 %s%n",
-            digitsWritten, progress, speed, remainingTime);
+        System.out.printf("           ✓ 已输出 %12d 位 (%3d%%) | 速度 %.0f 位/秒 | 剩余 %s | 间隔 %.1f 秒%n",
+            digitsWritten, progress, speed, remainingTime, intervalSeconds);
     }
 
     /**
