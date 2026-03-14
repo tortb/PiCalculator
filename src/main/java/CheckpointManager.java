@@ -1,131 +1,229 @@
 import java.io.*;
 import java.math.BigInteger;
-import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 
 /**
- * HPC 优化版检查点管理器
- * 
- * 优化点：
- * 1. 异步保存 - 使用后台线程保存检查点，不阻塞计算
- * 2. 增量保存 - 只保存变化的部分
- * 3. 压缩存储 - 使用序列化压缩减少磁盘占用
- * 4. 频率控制 - 智能控制检查点保存频率
+ * 高性能检查点管理器
+ *
+ * 核心优化点：
+ * 1. 二进制序列化 - 比 Properties 文本格式更高效
+ * 2. GZIP 压缩 - 减少磁盘占用（大整数压缩率高）
+ * 3. 原子写入 - 使用临时文件避免损坏
+ * 4. 快速加载 - 直接读取二进制数据
+ * 5. 频率控制 - 智能控制检查点保存频率
+ *
+ * 文件格式：
+ * [magic: 4 bytes][version: 4 bytes][iteration: 4 bytes]
+ * [P_length: 4 bytes][P_bytes: variable]
+ * [Q_length: 4 bytes][Q_bytes: variable]
+ * [T_length: 4 bytes][T_bytes: variable]
+ * [checksum: 4 bytes]
  */
 public class CheckpointManager {
+    
+    // ==================== 常量配置 ====================
+    
+    /** 检查点文件路径 */
     private static final String CHECKPOINT_FILE = "checkpoint.dat";
-    private static final String CHECKPOINT_META_FILE = "checkpoint.meta";
-    private static final String ITERATION_KEY = "iteration";
-    private static final String P_VALUE_KEY = "p_value";
-    private static final String Q_VALUE_KEY = "q_value";
-    private static final String T_VALUE_KEY = "t_value";
-    private static final String SEGMENT_KEY = "segment";
     
-    // 检查点输出频率控制
+    /** 临时文件路径（用于原子写入） */
+    private static final String CHECKPOINT_TEMP_FILE = "checkpoint.dat.tmp";
+    
+    /** 文件魔数 */
+    private static final int MAGIC = 0x50494350;  // "PICP" - Pi CheckPoint
+    
+    /** 文件格式版本 */
+    private static final int VERSION = 1;
+    
+    /** 检查点日志输出间隔 */
+    private static final int CHECKPOINT_LOG_INTERVAL = 100;
+    
+    // ==================== 状态变量 ====================
+    
     private static final AtomicInteger checkpointCounter = new AtomicInteger(0);
-    private static final int CHECKPOINT_LOG_INTERVAL = 100;  // 每 100 次输出一次日志
+    private static volatile long lastCheckpointTime = 0;
     
-    // 异步保存队列
-    private static volatile CheckpointData pendingCheckpoint = null;
-    private static volatile boolean saveInProgress = false;
-
+    // ==================== 保存检查点 ====================
+    
     /**
      * 保存检查点（默认不输出日志）
      */
     public static void saveCheckpoint(int iteration, Result result) {
         saveCheckpoint(iteration, result, false);
     }
-
+    
     /**
      * 保存检查点
+     * 
      * @param iteration 当前迭代次数
      * @param result 计算结果
      * @param forceLog 是否强制输出日志
      */
     public static void saveCheckpoint(int iteration, Result result, boolean forceLog) {
-        Properties props = new Properties();
-        props.setProperty(ITERATION_KEY, String.valueOf(iteration));
-        props.setProperty(P_VALUE_KEY, result.P.toString());
-        props.setProperty(Q_VALUE_KEY, result.Q.toString());
-        props.setProperty(T_VALUE_KEY, result.T.toString());
-
-        try (OutputStream output = new FileOutputStream(CHECKPOINT_FILE)) {
-            props.store(output, "Pi 计算检查点文件");
+        long start = System.nanoTime();
+        
+        try {
+            // 使用临时文件进行原子写入
+            File tempFile = new File(CHECKPOINT_TEMP_FILE);
+            File targetFile = new File(CHECKPOINT_FILE);
+            
+            try (DataOutputStream out = new DataOutputStream(
+                    new GZIPOutputStream(new FileOutputStream(tempFile)))) {
+                
+                // 写入文件头
+                out.writeInt(MAGIC);
+                out.writeInt(VERSION);
+                out.writeInt(iteration);
+                
+                // 写入 P, Q, T
+                writeBigInteger(out, result.P);
+                writeBigInteger(out, result.Q);
+                writeBigInteger(out, result.T);
+                
+                // 写入时间戳
+                out.writeLong(System.currentTimeMillis());
+                
+                // 计算并写入简单校验和
+                int checksum = computeChecksum(iteration, result);
+                out.writeInt(checksum);
+            }
+            
+            // 原子替换：先删除目标文件，再重命名临时文件
+            if (targetFile.exists()) {
+                targetFile.delete();
+            }
+            if (!tempFile.renameTo(targetFile)) {
+                // 重命名失败，尝试复制
+                try (InputStream in = new FileInputStream(tempFile);
+                     OutputStream out = new FileOutputStream(targetFile)) {
+                    in.transferTo(out);
+                }
+                tempFile.delete();
+            }
+            
+            long duration = System.nanoTime() - start;
+            lastCheckpointTime = System.currentTimeMillis();
             
             // 控制日志输出频率
-            if (forceLog || checkpointCounter.incrementAndGet() % CHECKPOINT_LOG_INTERVAL == 0) {
-                System.out.println("检查点已保存，迭代次数：" + iteration);
+            int count = checkpointCounter.incrementAndGet();
+            if (forceLog || count % CHECKPOINT_LOG_INTERVAL == 0) {
+                long size = targetFile.length();
+                System.out.printf("      [检查点] 迭代 %,d, 大小 %,d bytes, 耗时 %.2f ms%n",
+                    iteration, size, duration / 1_000_000.0);
             }
+            
         } catch (IOException e) {
-            System.err.println("保存检查点失败：" + e.getMessage());
+            System.err.println("[检查点] 保存失败：" + e.getMessage());
+            // 清理临时文件
+            new File(CHECKPOINT_TEMP_FILE).delete();
         }
     }
-
+    
     /**
-     * 保存分段检查点（用于大规模分段计算）
+     * 写入 BigInteger（二进制格式）
      */
-    public static void saveSegmentCheckpoint(int segment, int iteration, Result result) {
-        Properties props = new Properties();
-        props.setProperty(ITERATION_KEY, String.valueOf(iteration));
-        props.setProperty(SEGMENT_KEY, String.valueOf(segment));
-        props.setProperty(P_VALUE_KEY, result.P.toString());
-        props.setProperty(Q_VALUE_KEY, result.Q.toString());
-        props.setProperty(T_VALUE_KEY, result.T.toString());
-
-        try (OutputStream output = new FileOutputStream(CHECKPOINT_FILE)) {
-            props.store(output, "Pi 计算分段检查点文件");
-        } catch (IOException e) {
-            System.err.println("保存分段检查点失败：" + e.getMessage());
-        }
-        
-        // 保存元数据
-        saveCheckpointMeta(segment, iteration);
+    private static void writeBigInteger(DataOutputStream out, BigInteger value) throws IOException {
+        byte[] bytes = value.toByteArray();
+        out.writeInt(bytes.length);
+        out.write(bytes);
     }
-
+    
     /**
-     * 保存检查点元数据
+     * 读取 BigInteger（二进制格式）
      */
-    private static void saveCheckpointMeta(int segment, int iteration) {
-        Properties meta = new Properties();
-        meta.setProperty("timestamp", String.valueOf(System.currentTimeMillis()));
-        meta.setProperty("segment", String.valueOf(segment));
-        meta.setProperty("iteration", String.valueOf(iteration));
-        
-        try (OutputStream output = new FileOutputStream(CHECKPOINT_META_FILE)) {
-            meta.store(output, "检查点元数据");
-        } catch (IOException e) {
-            // 忽略元数据保存失败
-        }
+    private static BigInteger readBigInteger(DataInputStream in) throws IOException {
+        int length = in.readInt();
+        byte[] bytes = new byte[length];
+        in.readFully(bytes);
+        return new BigInteger(bytes);
     }
-
+    
+    /**
+     * 计算校验和
+     */
+    private static int computeChecksum(int iteration, Result result) {
+        int hash = 17;
+        hash = 31 * hash + iteration;
+        hash = 31 * hash + result.P.hashCode();
+        hash = 31 * hash + result.Q.hashCode();
+        hash = 31 * hash + result.T.hashCode();
+        return hash;
+    }
+    
+    // ==================== 加载检查点 ====================
+    
     /**
      * 加载检查点
-     * @return 检查点数据，如果不存在则返回 null
+     * 
+     * @return 检查点数据，如果不存在或无效则返回 null
      */
     public static CheckpointData loadCheckpoint() {
         File checkpointFile = new File(CHECKPOINT_FILE);
         if (!checkpointFile.exists()) {
             return null;
         }
-
-        Properties props = new Properties();
-        try (InputStream input = new FileInputStream(CHECKPOINT_FILE)) {
-            props.load(input);
-
-            int iteration = Integer.parseInt(props.getProperty(ITERATION_KEY, "0"));
-            int segment = Integer.parseInt(props.getProperty(SEGMENT_KEY, "0"));
-            BigInteger pValue = new BigInteger(props.getProperty(P_VALUE_KEY, "0"));
-            BigInteger qValue = new BigInteger(props.getProperty(Q_VALUE_KEY, "0"));
-            BigInteger tValue = new BigInteger(props.getProperty(T_VALUE_KEY, "0"));
-
-            System.out.println("从检查点恢复，段：" + segment + "，起始迭代：" + iteration);
-            return new CheckpointData(iteration, new Result(pValue, qValue, tValue));
-        } catch (IOException | NumberFormatException e) {
-            System.err.println("加载检查点失败：" + e.getMessage());
+        
+        try (DataInputStream in = new DataInputStream(
+                new GZIPInputStream(new FileInputStream(checkpointFile)))) {
+            
+            // 验证魔数
+            int magic = in.readInt();
+            if (magic != MAGIC) {
+                System.err.println("[检查点] 魔数不匹配，文件可能已损坏");
+                return null;
+            }
+            
+            // 验证版本
+            int version = in.readInt();
+            if (version != VERSION) {
+                System.err.println("[检查点] 版本不匹配 (期望 " + VERSION + ", 实际 " + version + ")");
+                return null;
+            }
+            
+            // 读取数据
+            int iteration = in.readInt();
+            BigInteger p = readBigInteger(in);
+            BigInteger q = readBigInteger(in);
+            BigInteger t = readBigInteger(in);
+            
+            // 读取时间戳（可选）
+            long timestamp = 0;
+            try {
+                timestamp = in.readLong();
+            } catch (EOFException e) {
+                // 旧格式可能没有时间戳
+            }
+            
+            // 验证校验和（如果存在）
+            try {
+                int expectedChecksum = in.readInt();
+                int actualChecksum = computeChecksum(iteration, new Result(p, q, t));
+                if (expectedChecksum != actualChecksum) {
+                    System.err.println("[检查点] 校验和不匹配，文件可能已损坏");
+                    return null;
+                }
+            } catch (EOFException e) {
+                // 旧格式可能没有校验和
+            }
+            
+            System.out.printf("[检查点] 已加载，迭代 %,d, 时间 %s%n",
+                iteration, new java.util.Date(timestamp));
+            
+            return new CheckpointData(iteration, new Result(p, q, t));
+            
+        } catch (IOException e) {
+            System.err.println("[检查点] 加载失败：" + e.getMessage());
+            return null;
+        } catch (Exception e) {
+            System.err.println("[检查点] 解析失败：" + e.getMessage());
             return null;
         }
     }
-
+    
+    // ==================== 工具方法 ====================
+    
     /**
      * 删除检查点文件
      */
@@ -133,50 +231,68 @@ public class CheckpointManager {
         File checkpointFile = new File(CHECKPOINT_FILE);
         if (checkpointFile.exists()) {
             checkpointFile.delete();
+            System.out.println("[检查点] 已删除");
         }
-        File metaFile = new File(CHECKPOINT_META_FILE);
-        if (metaFile.exists()) {
-            metaFile.delete();
+        File tempFile = new File(CHECKPOINT_TEMP_FILE);
+        if (tempFile.exists()) {
+            tempFile.delete();
         }
     }
-
+    
     /**
-     * 重置检查点计数器（用于新的计算任务）
+     * 重置检查点计数器
      */
     public static void resetCounter() {
         checkpointCounter.set(0);
+        lastCheckpointTime = 0;
     }
-
+    
     /**
      * 获取检查点文件路径
      */
     public static String getCheckpointFile() {
         return CHECKPOINT_FILE;
     }
-
+    
     /**
      * 检查是否存在检查点
      */
     public static boolean hasCheckpoint() {
         return new File(CHECKPOINT_FILE).exists();
     }
-
+    
     /**
-     * 检查点数据类
+     * 获取上次检查点时间
+     */
+    public static long getLastCheckpointTime() {
+        return lastCheckpointTime;
+    }
+    
+    /**
+     * 获取检查点计数器值
+     */
+    public static int getCheckpointCount() {
+        return checkpointCounter.get();
+    }
+    
+    // ==================== 检查点数据类 ====================
+    
+    /**
+     * 检查点数据封装类
      */
     public static class CheckpointData {
         public final int iteration;
         public final Result result;
-        public final int segment;
-
+        public final long timestamp;
+        
         public CheckpointData(int iteration, Result result) {
-            this(iteration, result, 0);
+            this(iteration, result, System.currentTimeMillis());
         }
-
-        public CheckpointData(int iteration, Result result, int segment) {
+        
+        public CheckpointData(int iteration, Result result, long timestamp) {
             this.iteration = iteration;
             this.result = result;
-            this.segment = segment;
+            this.timestamp = timestamp;
         }
     }
 }

@@ -1,223 +1,214 @@
 import java.math.BigInteger;
 import java.util.concurrent.RecursiveTask;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * HPC 优化版 Binary Splitting 并行计算任务
- * 
- * 优化点：
- * 1. 动态任务粒度 - 根据 CPU 核心数和计算规模自动调整 threshold
- * 2. 对象复用 - 使用可变 Result 对象减少临时对象创建
+ * 高性能 Binary Splitting 并行计算任务
+ *
+ * 核心优化点：
+ * 1. 预计算常量缓存 - 避免重复创建 BigInteger
+ * 2. 动态任务粒度 - 根据 CPU 核心数和计算规模自动调整
  * 3. 延迟合并 - 减少大整数乘法次数
- * 4. 检查点优化 - 只在关键节点保存，减少 I/O 开销
- * 5. 线程数控制 - 避免过度并行导致调度开销
+ * 4. 深度限制 - 防止过度拆分导致调度开销
+ * 5. 小任务顺序执行 - 减少 fork/join 开销
+ * 6. 位运算优化 - 使用位运算代替算术运算
+ *
+ * Chudnovsky 公式：
+ * 1/π = 12 * Σ(k=0 to ∞) [(-1)^k * (6k)! * (545140134k + 13591409)] / [(3k)! * (k!)^3 * (640320^3)^(k+1/2)]
+ *
+ * Binary Splitting 将求和转换为：
+ * P/Q = Σ [a_k / b_k] → P(a,b)/Q(a,b)
  */
 public class BinarySplitTask extends RecursiveTask<Result> {
-    // 预计算常量，避免重复创建 BigInteger
-    private static final BigInteger C3_OVER_24 = new BigInteger("10939058860032000");
-    private static final BigInteger TERM_CONSTANT_A = new BigInteger("545140134");
-    private static final BigInteger TERM_CONSTANT_B = new BigInteger("13591409");
-    private static final BigInteger SIX = new BigInteger("6");
-    private static final BigInteger TWO = new BigInteger("2");
-    private static final BigInteger ONE = BigInteger.ONE;
-    private static final BigInteger FIVE = new BigInteger("5");
+
+    private static final long serialVersionUID = 1L;
+
+    // ==================== 预计算常量 ====================
     
-    // 用于优化：预计算的 a 值缓存（减少 valueOf 调用）
+    /** C³/24 = 10939058860032000 - Chudnovsky 公式常量 */
+    private static final BigInteger C3_OVER_24 = new BigInteger("10939058860032000");
+    
+    /** 545140134 - 线性项系数 */
+    private static final BigInteger TERM_A = new BigInteger("545140134");
+    
+    /** 13591409 - 常数项 */
+    private static final BigInteger TERM_B = new BigInteger("13591409");
+    
+    /** 预计算小整数 */
+    private static final BigInteger SIX = BigInteger.valueOf(6);
+    private static final BigInteger TWO = BigInteger.valueOf(2);
+    private static final BigInteger ONE = BigInteger.ONE;
+    private static final BigInteger FIVE = BigInteger.valueOf(5);
+    
+    /** a 值缓存 (0-9999) - 避免重复创建小 BigInteger */
     private static final BigInteger[] A_CACHE = new BigInteger[10000];
+    
     static {
         for (int i = 0; i < A_CACHE.length; i++) {
             A_CACHE[i] = BigInteger.valueOf(i);
         }
     }
-
+    
+    // ==================== 任务参数 ====================
+    
+    /** 区间起点 a */
     private final int a;
+    
+    /** 区间终点 b */
     private final int b;
+    
+    /** 顺序计算阈值 */
     private final int threshold;
-    private final boolean enableCheckpoints;
-    private final int checkpointInterval;
-    private final int maxDepth;  // 最大递归深度，防止过度拆分
-    private final int currentDepth;  // 当前深度
-
+    
+    /** 最大递归深度 */
+    private final int maxDepth;
+    
+    /** 当前递归深度 */
+    private final int currentDepth;
+    
+    // ==================== 构造函数 ====================
+    
     /**
-     * 构造函数 - 完整版
+     * 完整构造函数
      */
-    public BinarySplitTask(int a, int b, int threshold, boolean enableCheckpoints, 
-                          int checkpointInterval, int maxDepth, int currentDepth) {
+    public BinarySplitTask(int a, int b, int threshold, int maxDepth, int currentDepth) {
         this.a = a;
         this.b = b;
         this.threshold = threshold;
-        this.enableCheckpoints = enableCheckpoints;
-        this.checkpointInterval = checkpointInterval;
         this.maxDepth = maxDepth;
         this.currentDepth = currentDepth;
     }
-
+    
     /**
-     * 构造函数 - 简化版（兼容旧代码）
+     * 简化构造函数（兼容旧代码）
      */
     public BinarySplitTask(int a, int b, int threshold) {
-        this(a, b, threshold, true, 10000, 20, 0);
+        this(a, b, threshold, 20, 0);
     }
-
-    /**
-     * 构造函数 - 带深度控制
-     */
-    public BinarySplitTask(int a, int b, int threshold, int maxDepth, int currentDepth) {
-        this(a, b, threshold, true, 10000, maxDepth, currentDepth);
-    }
-
+    
+    // ==================== 核心计算方法 ====================
+    
     @Override
     protected Result compute() {
         int range = b - a;
         
-        // 优化 1: 如果范围小于 threshold 或达到最大深度，直接顺序计算
+        // 优化 1: 范围小于阈值或达到最大深度时，直接顺序计算
         if (range <= threshold || currentDepth >= maxDepth) {
-            return computeDirectly();
+            return computeSequential(a, b);
         }
         
-        // 优化 2: 对于中等规模任务，使用简化的二分策略
-        int m = (a + b) >>> 1;  // 使用无符号右移，略微提升性能
-
-        // 优化 3: 根据任务大小决定是否并行
-        // 只有当子任务足够大时才 fork，否则顺序执行
-        if (range > threshold * 4) {
-            // 大规模任务：并行执行
-            BinarySplitTask leftTask = new BinarySplitTask(
-                a, m, threshold, enableCheckpoints, checkpointInterval, maxDepth, currentDepth + 1);
-            BinarySplitTask rightTask = new BinarySplitTask(
-                m, b, threshold, enableCheckpoints, checkpointInterval, maxDepth, currentDepth + 1);
-
-            // fork 左任务，直接计算右任务，然后 join 左任务
-            leftTask.fork();
-            Result rightResult = rightTask.compute();
-            Result leftResult = leftTask.join();
-
-            // 合并结果
-            return mergeResults(leftResult, rightResult, range);
-        } else {
-            // 中等规模任务：顺序执行，减少 fork/join 开销
-            Result leftResult = new BinarySplitTask(
-                a, m, threshold, enableCheckpoints, checkpointInterval, maxDepth, currentDepth + 1).compute();
-            Result rightResult = new BinarySplitTask(
-                m, b, threshold, enableCheckpoints, checkpointInterval, maxDepth, currentDepth + 1).compute();
-            
-            return mergeResults(leftResult, rightResult, range);
+        // 优化 2: 中等规模任务顺序执行，减少 fork/join 开销
+        if (range <= threshold * 4) {
+            return computeSequential(a, b);
         }
+        
+        // 优化 3: 大规模任务并行执行
+        int m = (a + b) >>> 1;  // 无符号右移
+        
+        // 创建子任务
+        BinarySplitTask leftTask = new BinarySplitTask(
+            a, m, threshold, maxDepth, currentDepth + 1);
+        BinarySplitTask rightTask = new BinarySplitTask(
+            m, b, threshold, maxDepth, currentDepth + 1);
+        
+        // Fork-join 模式：fork 一个，直接计算另一个，然后 join
+        leftTask.fork();
+        Result rightResult = rightTask.compute();
+        Result leftResult = leftTask.join();
+        
+        // 合并结果
+        return merge(leftResult, rightResult);
     }
-
+    
     /**
-     * 合并两个结果
-     * 优化：内联合并逻辑，减少方法调用开销
+     * 顺序计算区间 [a, b) 的结果
      */
-    private Result mergeResults(Result left, Result right, int range) {
-        // P = P_left * P_right
-        BigInteger P = left.P.multiply(right.P);
-        
-        // Q = Q_left * Q_right
-        BigInteger Q = left.Q.multiply(right.Q);
-        
-        // T = T_left * Q_right + P_left * T_right
-        // 优化：先计算较小的乘法
-        BigInteger T;
-        if (left.T.bitLength() < right.Q.bitLength()) {
-            T = left.T.multiply(right.Q).add(left.P.multiply(right.T));
-        } else {
-            T = right.Q.multiply(left.T).add(left.P.multiply(right.T));
-        }
-
-        // 检查点保存（优化：减少保存频率）
-        if (enableCheckpoints && range > checkpointInterval) {
-            if ((range & 0x7F) == 0) {  // 每 128 个范围单位保存一次
-                CheckpointManager.saveCheckpoint(b, new Result(P, Q, T), false);
-            }
-        }
-
-        return new Result(P, Q, T);
-    }
-
-    /**
-     * 直接计算（顺序执行）
-     * 优化：使用缓存的 BigInteger 值，减少对象创建
-     */
-    private Result computeDirectly() {
-        int range = b - a;
-        
-        if (range == 1) {
-            return computeBaseCase(a);
-        }
-        
-        // 对于小范围，使用顺序递归
-        int m = (a + b) >>> 1;
-        Result leftResult = computeDirectlyRange(a, m);
-        Result rightResult = computeDirectlyRange(m, b);
-        
-        return mergeResults(leftResult, rightResult, range);
-    }
-
-    /**
-     * 计算基础项（b - a == 1）
-     * 优化：使用缓存和预计算
-     */
-    private Result computeBaseCase(int a) {
-        if (a == 0) {
-            // a = 0 的基本情况
-            return new Result(ONE, ONE, TERM_CONSTANT_B);
-        }
-        
-        // 使用缓存的 a 值（如果可用）
-        BigInteger aBig = (a < A_CACHE.length) ? A_CACHE[a] : BigInteger.valueOf(a);
-
-        // P = (6a-5)(2a-1)(6a-1)
-        // 优化：重用中间计算结果
-        BigInteger sixA = SIX.multiply(aBig);
-        BigInteger factor1 = sixA.subtract(FIVE);  // 6a-5
-        BigInteger factor2 = TWO.multiply(aBig).subtract(ONE);  // 2a-1
-        BigInteger factor3 = sixA.subtract(ONE);   // 6a-1
-        
-        // 优化：先乘较小的数
-        BigInteger P;
-        if (factor2.bitLength() < factor1.bitLength()) {
-            P = factor2.multiply(factor1).multiply(factor3);
-        } else {
-            P = factor1.multiply(factor2).multiply(factor3);
-        }
-
-        // Q = a^3 * 10939058860032000
-        // 优化：a^3 = a * a * a
-        BigInteger aSquared = aBig.multiply(aBig);
-        BigInteger Q = aSquared.multiply(aBig).multiply(C3_OVER_24);
-
-        // T = (13591409 + 545140134*a) * P
-        BigInteger termMultiplier = TERM_CONSTANT_B.add(TERM_CONSTANT_A.multiply(aBig));
-        BigInteger T = termMultiplier.multiply(P);
-
-        // 如果 a 是奇数，T 取负值
-        if ((a & 1) == 1) {  // 使用位运算检查奇偶性
-            T = T.negate();
-        }
-
-        // 检查点（优化：减少保存频率）
-        if (enableCheckpoints && (a & 0x3FF) == 0) {  // 每 1024 个迭代保存一次
-            CheckpointManager.saveCheckpoint(a, new Result(P, Q, T), false);
-        }
-
-        return new Result(P, Q, T);
-    }
-
-    /**
-     * 顺序计算指定范围内的结果
-     */
-    private Result computeDirectlyRange(int start, int end) {
+    private Result computeSequential(int start, int end) {
         int range = end - start;
         
         if (range == 1) {
             return computeBaseCase(start);
         }
         
+        // 二分递归
         int m = (start + end) >>> 1;
-        Result leftResult = computeDirectlyRange(start, m);
-        Result rightResult = computeDirectlyRange(m, end);
+        Result left = computeSequential(start, m);
+        Result right = computeSequential(m, end);
+        return merge(left, right);
+    }
+    
+    /**
+     * 合并两个结果
+     * 
+     * 公式：
+     * P = P_left * P_right
+     * Q = Q_left * Q_right
+     * T = T_left * Q_right + P_left * T_right
+     */
+    private Result merge(Result left, Result right) {
+        // 优化：根据位长度选择乘法顺序，减少中间结果大小
+        BigInteger P = left.P.multiply(right.P);
+        BigInteger Q = left.Q.multiply(right.Q);
         
-        return mergeResults(leftResult, rightResult, range);
+        // T = T_left * Q_right + P_left * T_right
+        // 优化：先计算较小的乘法
+        BigInteger T;
+        if (left.T.bitLength() + right.Q.bitLength() < 
+            left.P.bitLength() + right.T.bitLength()) {
+            T = left.T.multiply(right.Q).add(left.P.multiply(right.T));
+        } else {
+            T = right.Q.multiply(left.T).add(left.P.multiply(right.T));
+        }
+        
+        return new Result(P, Q, T);
+    }
+    
+    /**
+     * 计算基础项 (b - a == 1)
+     * 
+     * Chudnovsky 公式单项：
+     * P = (6a-5)(2a-1)(6a-1)
+     * Q = a³ * C³/24
+     * T = (13591409 + 545140134*a) * P
+     * 
+     * 如果 a 是奇数，T 取负值
+     */
+    private Result computeBaseCase(int a) {
+        // a = 0 的特殊情况
+        if (a == 0) {
+            return new Result(ONE, ONE, TERM_B);
+        }
+        
+        // 使用缓存的 a 值
+        BigInteger aBig = (a < A_CACHE.length) ? A_CACHE[a] : BigInteger.valueOf(a);
+        
+        // 计算 P = (6a-5)(2a-1)(6a-1)
+        BigInteger sixA = SIX.multiply(aBig);
+        BigInteger factor1 = sixA.subtract(FIVE);      // 6a-5
+        BigInteger factor2 = TWO.multiply(aBig).subtract(ONE);  // 2a-1
+        BigInteger factor3 = sixA.subtract(ONE);       // 6a-1
+        
+        // 优化乘法顺序：先乘较小的数
+        BigInteger P;
+        if (factor2.bitLength() < factor1.bitLength()) {
+            P = factor2.multiply(factor1).multiply(factor3);
+        } else {
+            P = factor1.multiply(factor2).multiply(factor3);
+        }
+        
+        // 计算 Q = a³ * C³/24
+        // a³ = a * a * a
+        BigInteger aSquared = aBig.multiply(aBig);
+        BigInteger Q = aSquared.multiply(aBig).multiply(C3_OVER_24);
+        
+        // 计算 T = (13591409 + 545140134*a) * P
+        BigInteger termMultiplier = TERM_B.add(TERM_A.multiply(aBig));
+        BigInteger T = termMultiplier.multiply(P);
+        
+        // 如果 a 是奇数，T 取负值
+        if ((a & 1) == 1) {  // 位运算检查奇偶性
+            T = T.negate();
+        }
+        
+        return new Result(P, Q, T);
     }
 }
