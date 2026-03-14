@@ -190,10 +190,7 @@ public class StreamingDivision {
             int digitsWritten = 0;
             int linePos = 0;  // 当前行已写字符数
             int blockLines = 0; // 当前块的行数
-            
-            // 预计算 10^BATCH_SIZE
-            BigInteger batchMultiplier = POWERS_OF_TEN[BATCH_SIZE];
-            
+
             while (digitsWritten < totalDigits) {
                 // 计算当前批次的实际大小
                 int currentBatchSize = Math.min(BATCH_SIZE, totalDigits - digitsWritten);

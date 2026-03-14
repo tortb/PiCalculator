@@ -1,38 +1,56 @@
 #!/bin/bash
 
-# π计算器便捷启动脚本
+# π 计算器便捷启动脚本
 # 用法：java-pi <位数> [输出文件名]
 # 示例：java-pi 1000000
 #       java-pi 1000000 pi_result.md
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [ $# -lt 1 ]; then
-    echo "π计算器 - 高性能π值计算工具"
+# 显示帮助信息
+show_help() {
+    echo "╔═══════════════════════════════════════════════════════════"
+    echo "║              π 计算器 - 高性能π值计算工具                 "
+    echo "╚═══════════════════════════════════════════════════════════"
     echo ""
     echo "用法：java-pi <位数> [输出文件名]"
     echo ""
     echo "示例:"
-    echo "  java-pi 100        # 计算 100 位"
-    echo "  java-pi 1000000    # 计算 100 万位"
-    echo "  java-pi 1000000 out.md"
+    echo "  java-pi 100              # 快速测试"
+    echo "  java-pi 1000000          # 100 万位"
+    echo "  java-pi 1000000 out.md   # 指定输出文件"
     echo ""
     echo "常用位数:"
-    echo "  100        - 快速测试"
-    echo "  1000       - 基础测试"
-    echo "  10000      - 常规精度"
-    echo "  100000     - 高精度"
-    echo "  1000000    - 超高精度"
+    echo "  100        - 快速测试 (~0.1 秒)"
+    echo "  1000       - 基础测试 (~0.1 秒)"
+    echo "  10000      - 常规精度 (~0.5 秒)"
+    echo "  100000     - 高精度 (~1.5 秒)"
+    echo "  1000000    - 超高精度 (~35 秒)"
+    echo "  10000000   - 扩展精度 (~8 分钟)"
+    echo "  100000000  - 1 亿位 (~2 小时)"
+    echo ""
+    echo "JVM 参数建议:"
+    echo "  100 万位：  -Xms2G -Xmx4G"
+    echo "  1000 万位： -Xms4G -Xmx8G"
+    echo "  1 亿位：    -Xms8G -Xmx16G"
+    echo "  10 亿位：   -Xms16G -Xmx32G"
+    echo ""
+}
+
+if [ $# -lt 1 ]; then
+    show_help
     exit 0
 fi
 
-# 确保 jar 文件存在
-if [ ! -f "$SCRIPT_DIR/PiCalculator.jar" ]; then
-    echo "错误：未找到 PiCalculator.jar"
-    echo "正在编译项目..."
+# JAR 文件路径
+JAR_FILE="$SCRIPT_DIR/target/PiCalculator-2.0-HPC-jar-with-dependencies.jar"
+
+# 如果 JAR 不存在，尝试编译
+if [ ! -f "$JAR_FILE" ]; then
+    echo "⚠️  未找到编译文件，正在编译项目..."
     cd "$SCRIPT_DIR" && ./build.sh
     if [ $? -ne 0 ]; then
-        echo "编译失败！"
+        echo "❌ 编译失败！"
         exit 1
     fi
 fi
@@ -55,47 +73,57 @@ get_available_memory() {
 calculate_heap_size() {
     local digits=$1
     local avail_mem=$2
-    
-    # 基础内存 1GB
+
+    # 基础内存配置
     local base_mem=1024
     
-    # 根据位数估算额外内存 (每 100 万位约需 100MB)
-    local extra_mem=$((digits / 1000000 * 100))
-    
-    # 计算所需内存
-    local needed=$((base_mem + extra_mem))
-    
-    # 使用可用内存的 70%
-    local max_use=$((avail_mem * 70 / 100))
-    
-    # 取较小值，但至少有 256MB
-    if [ $max_use -lt 256 ]; then
-        max_use=256
+    # 根据位数估算额外内存
+    if [ $digits -ge 1000000000 ]; then
+        # 10 亿位：需要 32GB+
+        base_mem=32768
+    elif [ $digits -ge 100000000 ]; then
+        # 1 亿位：需要 8-16GB
+        base_mem=8192
+    elif [ $digits -ge 10000000 ]; then
+        # 1000 万位：需要 2-4GB
+        base_mem=2048
+    elif [ $digits -ge 1000000 ]; then
+        # 100 万位：需要 1-2GB
+        base_mem=1024
+    else
+        # 100 万位以下：512MB 足够
+        base_mem=512
     fi
-    
-    if [ $needed -lt $max_use ]; then
-        echo $needed
+
+    # 使用可用内存的 70%，但不超过所需内存
+    local max_use=$((avail_mem * 70 / 100))
+
+    # 取较小值
+    if [ $base_mem -lt $max_use ]; then
+        echo $base_mem
     else
         echo $max_use
     fi
 }
 
+# 获取可用内存
 AVAIL_MEM=$(get_available_memory)
 HEAP_SIZE=$(calculate_heap_size $1 $AVAIL_MEM)
 
 # 确保堆大小在合理范围内
 if [ $HEAP_SIZE -lt 256 ]; then
     HEAP_SIZE=256
-elif [ $HEAP_SIZE -gt 16384 ]; then
-    HEAP_SIZE=16384
+elif [ $HEAP_SIZE -gt 32768 ]; then
+    HEAP_SIZE=32768
 fi
 
 # 设置 JVM 参数
-JAVA_OPTS="-Xms${HEAP_SIZE}M -Xmx${HEAP_SIZE}M -XX:+UseG1GC -XX:+AlwaysPreTouch"
+JAVA_OPTS="-Xms${HEAP_SIZE}M -Xmx${HEAP_SIZE}M -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+AlwaysPreTouch"
 
 # 内存充足时启用 NUMA
 if [ $HEAP_SIZE -gt 4096 ] && [ -f /sys/devices/system/node/possible ]; then
     JAVA_OPTS="$JAVA_OPTS -XX:+UseNUMA"
 fi
 
-exec java $JAVA_OPTS -jar "$SCRIPT_DIR/PiCalculator.jar" "$@"
+# 运行程序
+exec java $JAVA_OPTS -jar "$JAR_FILE" "$@"

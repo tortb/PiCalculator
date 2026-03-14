@@ -24,9 +24,8 @@ public class PiWriter {
      * 根据数据大小自动选择最优写入方式
      */
     public static void writePiToFile(String piValue, String filename) throws IOException {
-        File file = new File(filename);
         long estimatedSize = estimateFileSize(piValue.length());
-        
+
         if (estimatedSize > MMAP_THRESHOLD) {
             // 大文件：使用内存映射
             writePiWithMemoryMap(piValue, filename);

@@ -1,9 +1,6 @@
-import java.math.BigDecimal;
 import java.math.BigInteger;
-import java.math.MathContext;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 高性能 π 计算引擎 - 支持 1 亿 -10 亿位计算
@@ -22,31 +19,23 @@ import java.util.concurrent.atomic.AtomicLong;
  * - 5 亿位以上：分段计算，每段 20 万迭代
  */
 public class PiEngine {
-    
-    // ==================== Chudnovsky 算法常量 ====================
-    
-    private static final BigInteger MULTIPLIER = new BigInteger("426880");
-    
+
     // ==================== 分段计算配置 ====================
-    
+
     /** 1 亿位以上每段迭代数 */
     private static final int SEGMENT_SIZE_100M = 500_000;
     
     /** 5 亿位以上每段迭代数 */
     private static final int SEGMENT_SIZE_500M = 200_000;
-    
+
     /** 10 亿位以上每段迭代数 */
     private static final int SEGMENT_SIZE_1B = 100_000;
-    
-    /** 检查点保存间隔（迭代次数） */
-    private static final int CHECKPOINT_INTERVAL = 100_000;
-    
+
     // ==================== 实例变量 ====================
-    
+
     private final ForkJoinPool forkJoinPool;
     private final int parallelism;
-    private final AtomicLong totalIterationsCompleted = new AtomicLong(0);
-    
+
     // 性能统计
     private long binarySplitStartTime;
     private long piCalcStartTime;
@@ -213,11 +202,10 @@ public class PiEngine {
         }
         
         binarySplitStartTime = System.nanoTime();
-        
+
         while (segmentStart < totalIterations) {
             int segmentEnd = Math.min(segmentStart + segmentSize, totalIterations);
-            int currentSegmentSize = segmentEnd - segmentStart;
-            
+
             long segStart = System.nanoTime();
             Result segmentResult = binarySplit(segmentStart, segmentEnd);
             long segTime = System.nanoTime() - segStart;
@@ -319,15 +307,51 @@ public class PiEngine {
     
     /**
      * 流式输出 π 值到文件
+     * 
+     * 优化：
+     * 1. 使用 StreamingDivisionEngine 进行逐位流式除法
+     * 2. 不创建完整的 π BigInteger，避免 OOM
+     * 3. 1MB 缓冲写入，减少系统调用
      */
     private void streamPiToFile(Result result, int digits, String outputFile) throws Exception {
         System.out.println();
+        System.out.println("[π 值计算] 计算分子 = 426880 × √10005 × Q...");
+
+        piCalcStartTime = System.nanoTime();
+
+        // 计算分子：numerator = 426880 * sqrt(10005) * Q
+        // 使用高精度 BigDecimal 计算
+        int extraPrecision = Math.max(100, digits / 10);
+        java.math.MathContext mc = new java.math.MathContext(extraPrecision);
+
+        java.math.BigDecimal sqrt10005 = java.math.BigDecimal.valueOf(10005).sqrt(mc);
+        java.math.BigDecimal constant = new java.math.BigDecimal("426880").multiply(sqrt10005, mc);
+        java.math.BigDecimal bigQ = new java.math.BigDecimal(result.Q);
+        java.math.BigDecimal numeratorBd = constant.multiply(bigQ, mc);
+
+        // 转换为 BigInteger（不放大，直接取整）
+        BigInteger numerator = numeratorBd.toBigInteger();
+
+        long piCalcTime = System.nanoTime() - piCalcStartTime;
+        System.out.printf("[π 值计算] 完成，耗时 %.2f 秒，分子位数：%,d%n",
+            piCalcTime / 1_000_000_000.0, numerator.toString().length());
+
+        // 使用新的流式引擎进行逐位除法
+        System.out.println();
         System.out.println("[输出] 开始流式输出到文件：" + outputFile);
-        
+
         streamStartTime = System.nanoTime();
-        StreamingDivision.streamPi(result.Q, result.T, digits, outputFile);
-        long streamTime = System.nanoTime() - streamStartTime;
         
+        // 调用新的 StreamingDivisionEngine
+        StreamingDivisionEngine.streamPi(
+            numerator,
+            result.T,
+            digits,
+            java.nio.file.Paths.get(outputFile)
+        );
+        
+        long streamTime = System.nanoTime() - streamStartTime;
+
         System.out.printf("[输出] 流式输出完成，耗时 %.2f 秒%n", streamTime / 1_000_000_000.0);
         System.out.println("π 值已保存到：" + outputFile);
     }

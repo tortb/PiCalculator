@@ -29,11 +29,10 @@ public class ProgressMonitor {
         double progressPercent = (double) currentIteration / totalIterations * 100.0;
         
         // 计算每秒计算的位数
-        double digitsPerSecond = elapsedMs > 0 ? 
+        double digitsPerSecond = elapsedMs > 0 ?
             (double) digitsCalculated / (elapsedMs / 1000.0) : 0;
-        
+
         // 估算剩余时间
-        double remainingPercent = 100.0 - progressPercent;
         double estimatedTotalTime = elapsedMs / progressPercent * 100.0;
         double remainingTimeMs = estimatedTotalTime - elapsedMs;
         double remainingTimeSec = remainingTimeMs / 1000.0;

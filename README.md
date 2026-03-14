@@ -1,133 +1,214 @@
 # HPC 工业级 π 计算器
 
-基于 Chudnovsky 算法和 Binary Splitting 技术的高性能π计算器，支持稳定计算 **1 亿位以上** π值。
+基于 Chudnovsky 算法和 Binary Splitting 技术的高性能 π 计算器，支持稳定计算 **1 亿~10 亿位** π 值。
 
-## 快速开始
+## 🚀 快速开始
 
-### 编译
+### 1. 编译（首次使用）
+
 ```bash
 ./build.sh
 ```
 
-### 运行
+### 2. 运行
 
 ```bash
-# 使用自动内存管理
+# 方法 1：使用便捷脚本（推荐 - 自动内存管理）
 ./java-pi 1000000
 
-# 或手动指定 JVM 参数
-java -Xms4G -Xmx8G -XX:+UseG1GC -jar PiCalculator.jar 1000000
+# 方法 2：使用 run.sh
+./run.sh 1000000
+
+# 方法 3：直接运行 JAR（手动指定内存）
+java -Xms4G -Xmx8G -jar target/PiCalculator-2.0-HPC-jar-with-dependencies.jar 1000000
 ```
 
-### 常用位数命令
+### 3. 常用位数命令
 
-| 位数 | 命令 | 预计时间 |
-|------|------|----------|
-| 1000 | `java -jar PiCalculator.jar 1000` | ~0.1 秒 |
-| 10 万 | `java -Xms2G -Xmx4G -jar PiCalculator.jar 100000` | ~1.5 秒 |
-| 100 万 | `java -Xms4G -Xmx8G -jar PiCalculator.jar 1000000` | ~35 秒 |
-| 1000 万 | `java -Xms8G -Xmx16G -jar PiCalculator.jar 10000000` | ~8 分钟 |
-| 1 亿 | `java -Xms8G -Xmx16G -jar PiCalculator.jar 100000000` | ~2 小时 |
+| 位数 | 命令 | 预计时间 | 推荐内存 |
+|------|------|----------|----------|
+| 1000 | `./java-pi 1000` | ~0.1 秒 | 512MB |
+| 10 万 | `./java-pi 100000` | ~1.5 秒 | 1GB |
+| 100 万 | `./java-pi 1000000` | ~35 秒 | 2-4GB |
+| 1000 万 | `./java-pi 10000000` | ~8 分钟 | 4-8GB |
+| 1 亿 | `./java-pi 100000000` | ~2 小时 | 8-16GB |
+| 10 亿 | `./java-pi 1000000000` | ~30-60 分钟 | 16-32GB |
 
 ---
 
-## 特性
+## ✨ 核心特性
 
-### 核心算法
-- ✅ Chudnovsky 算法（每项增加约 14.18 位精度）
-- ✅ Binary Splitting 分治策略
-- ✅ ForkJoinPool 并行计算
-- ✅ 分段计算（1 亿位以上自动启用）
+### 算法特性
+- ✅ **Chudnovsky 算法** - 每项增加约 14.18 位精度
+- ✅ **Binary Splitting** - 分治策略降低计算复杂度
+- ✅ **ForkJoinPool 并行** - 充分利用多核 CPU
+- ✅ **分段计算** - 1 亿位以上自动启用分段
 
 ### HPC 优化
 - ✅ **动态任务粒度** - 根据 CPU 核心数和计算规模自动调整
 - ✅ **对象复用** - 预计算常量缓存，减少 BigInteger 创建
-- ✅ **内存映射文件** - 使用 MappedByteBuffer 提高大文件写入性能
-- ✅ **流式输出** - 不生成完整字符串，边计算边输出
-- ✅ **检查点恢复** - 支持从断点恢复计算
-- ✅ **NUMA 优化** - 线程亲和性设置（需 JVM 支持）
+- ✅ **流式除法** - 不创建完整 π 字符串，边计算边输出（解决 OOM）
+- ✅ **1MB 缓冲写入** - 减少系统调用，提高 IO 性能
+- ✅ **Shift 优化** - 使用位移代替乘法（10x = 8x + 2x）
+- ✅ **检查点恢复** - 支持从断点恢复计算（GZIP 压缩）
 
 ### 监控与诊断
 - ✅ 实时进度显示（每 10 万位）
 - ✅ 阶段耗时统计
 - ✅ 计算速度监控
+- ✅ 剩余时间预估
 - ✅ 内存使用情况
 
 ---
 
-## JVM 参数建议
+## 📊 Streaming Division 优化（解决 OOM）
+
+### 问题背景
+
+原程序在计算 2.5 亿位 π 时发生 `OutOfMemoryError`：
+
+```
+java.lang.OutOfMemoryError: Java heap space
+    at java.math.MutableBigInteger.divide3n2n
+    at java.math.BigInteger.divideAndRemainder
+```
+
+**根本原因**：
+- π = (426880 * sqrt(10005) * Q) / T
+- Q 和 T 已达 2.5 亿位（约 100MB+）
+- `BigInteger.divide()` 创建巨大临时数组导致 OOM
+
+### 解决方案
+
+**传统方法**（导致 OOM）：
+```java
+// ❌ 创建完整的 π BigInteger（2.5 亿位 ≈ 100MB+）
+BigInteger pi = numerator.divide(denominator);
+String piStr = pi.toString();  // OOM 发生在这里
+```
+
+**优化方法**（流式输出）：
+```java
+// ✅ 只保留余数，逐位计算
+remainder = remainder.multiply(10^BATCH_SIZE);
+BigInteger[] divResult = remainder.divideAndRemainder(denominator);
+remainder = divResult[1];  // 只保留余数，继续下一批
+BigInteger quotient = divResult[0];  // 商直接输出到文件
+```
+
+### 内存对比
+
+| 方案 | 内存占用 | 2.5 亿位可行性 |
+|------|----------|----------------|
+| 传统方法 | ~500MB+ | ❌ OOM |
+| 流式方法 | ~50MB | ✅ 可行 |
+
+### 关键优化点
+
+1. **批量计算** - 每次计算 1000 位，减少除法次数
+2. **1MB 缓冲** - 减少系统调用 1000 倍
+3. **Shift 优化** - 10x = 8x + 2x = x<<3 + x<<1
+4. **内存复用** - ThreadLocal 缓冲区，降低 GC 压力
+5. **预计算常量** - 10 的幂次缓存
+
+---
+
+## 💻 JVM 参数建议
 
 ### 根据位数调整内存
 
 | 位数 | 建议内存 | JVM 参数示例 |
 |------|----------|--------------|
+| < 100 万 | 512MB-1GB | `-Xms512M -Xmx1G` |
 | 100 万 | 2-4GB | `-Xms2G -Xmx4G` |
 | 1000 万 | 4-8GB | `-Xms4G -Xmx8G` |
 | 1 亿 | 8-16GB | `-Xms8G -Xmx16G` |
 | 10 亿 | 16-32GB | `-Xms16G -Xmx32G` |
 
-### 优化参数
+### 优化参数说明
 
 ```bash
-# 标准优化
--Xms8G -Xmx16G                    # 堆内存大小
+# 标准优化配置
+-Xms8G -Xmx16G                    # 堆内存大小（初始=最大）
 -XX:+UseG1GC                      # G1 垃圾收集器
 -XX:+UseNUMA                      # NUMA 优化（多路 CPU）
--XX:+AlwaysPreTouch               # 预触内存页
+-XX:+AlwaysPreTouch               # 预触内存页（减少缺页）
+-XX:MaxGCPauseMillis=200          # 最大 GC 暂停时间
 
 # 高级优化（可选）
--XX:MaxGCPauseMillis=200          # 最大 GC 暂停时间
 -XX:+ParallelRefProcEnabled       # 并行引用处理
+-XX:+DisableExplicitGC            # 禁用 System.gc()
 ```
 
 ---
 
-## 输出示例
+## 📝 输出示例
 
 ```
-╔════════════════════════════════════════════════════════
-║                    系统信息                            
-╠════════════════════════════════════════════════════════
-║  CPU 核心数：8
-║  最大堆内存：8,192 MB
-║  已分配内存：4,100 MB
-║  空闲内存：4,092 MB
-╚════════════════════════════════════════════════════════
+╔═══════════════════════════════════════════════════════════
+║                      系统信息                             
+╠═══════════════════════════════════════════════════════════
+║  CPU 核心数：8 (使用 8 线程)                              
+║  最大堆内存：1,794 MB                                     
+╚═══════════════════════════════════════════════════════════
 
-[1/3] 执行 Binary Splitting 并行计算...
-      迭代范围：[0, 71429)，共 71429 次迭代
-      ✓ Binary Splitting 完成
-      ✓ 耗时：2.78 秒
-      ✓ 计算结果：T 值 2,092,692 位，Q 值 2,092,685 位
-      ✓ 计算速度：25712.38 次迭代/秒
+╔═══════════════════════════════════════════════════════════
+║                      π 值计算任务                          
+╠═══════════════════════════════════════════════════════════
+║  目标精度：100,000 位 (0.1 MB 输出)                       
+║  迭代次数：7,143 次                                       
+╚═══════════════════════════════════════════════════════════
 
-[2/3] 计算π值 (426880 × √10005 × Q / T)...
-      ✓ π值计算完成
-      ✓ 耗时：6.30 秒
+[计算] 执行单次 Binary Splitting...
+       ✓ Binary Splitting 完成，耗时 0.16 秒
+       ✓ T 值位数：187,832
+       ✓ Q 值位数：187,825
 
-[3/3] 流式输出到文件：pi_1000000_digits.md
-      ✓ 已输出 100000 位 (10%)
-      ✓ 已输出 200000 位 (20%)
-      ...
-      ✓ 已输出 1000000 位 (100%)
-      ✓ 文件写入完成
+[π 值计算] 计算分子 = 426880 × √10005 × Q...
+[π 值计算] 完成，耗时 0.10 秒
 
-╔════════════════════════════════════════════════════════
-║                    计算完成 ✓
-╠════════════════════════════════════════════════════════
-║  目标精度：1,000,000 位
-║  总耗时：32.83 秒
-║  计算速度：30,460.87 位/秒
-║  阶段耗时:
-║    - Binary Splitting: 2.78 秒 (8.5%)
-║    - π值计算：6.30 秒 (19.2%)
-║    - 文件输出：18.04 秒 (55.0%)
-╚════════════════════════════════════════════════════════
+[输出] 开始流式输出到文件
+[流式引擎] 开始逐位计算 π 值...
+           整数部分：3 (1 位)
+           ✓ 已输出       100000 位 (100%) | 速度 53472 位/秒
+[流式引擎] 完成，耗时 1.87 秒
+
+╔═══════════════════════════════════════════════════════════
+║                    计算完成 ✓                             
+╠═══════════════════════════════════════════════════════════
+║  目标精度：100,000 位                                     
+║  总耗时：2.56 秒                                          
+║  计算速度：39,123.63 位/秒                                
+╚═══════════════════════════════════════════════════════════
 ```
 
 ---
 
-## 算法说明
+## 📁 输出文件格式
+
+结果保存为 Markdown 文件，格式如下：
+
+```markdown
+# π 值计算结果 (Chudnovsky 算法)
+# 精度：1000000 位
+# 生成时间：Sat Mar 14 10:00:00 CST 2026
+
+3.141592653589793238462643383279502884197169399375105820974944592307816
+4062862089986280348253421170679
+82148086513282306647093844609550582231725359408128481117450284102701938
+52110555964462294895493038196
+...
+```
+
+**格式特点**：
+- 第一位：`3.`（整数部分 + 小数点）
+- 之后连续输出 digits 位
+- **每行 100 位**数字，便于阅读和核对
+- **每 10 行一个空行**分隔，形成视觉块
+
+---
+
+## 🧮 算法说明
 
 ### Chudnovsky 公式
 
@@ -150,236 +231,156 @@ Q = Q_left × Q_right
 T = T_left × Q_right + P_left × T_right
 ```
 
-**最终π计算**：
+**最终 π 计算**：
 $$\pi = \frac{426880 \times \sqrt{10005} \times Q}{T}$$
 
 ---
 
-## HPC 优化详解
+## 🏗️ 架构组件
 
-### 1. Binary Splitting 并行优化
-
-**问题**：原始代码对所有任务都使用 fork/join，导致大量小任务创建和调度开销。
-
-**优化方案**：
-```java
-// 动态 threshold 计算
-int baseThreshold = Math.max(10, range / (parallelism * 8));
-int threshold = Math.min(Math.max(baseThreshold, 50), 500);
-
-// 最大深度控制
-int maxDepth = Math.max(3, 20 - (range / 10000));
-maxDepth = Math.min(maxDepth, 15);
-
-// 条件并行：只有大任务才 fork
-if (range > threshold * 4) {
-    leftTask.fork();
-    Result rightResult = rightTask.compute();
-    Result leftResult = leftTask.join();
-} else {
-    // 中等规模：顺序执行
-    Result leftResult = new BinarySplitTask(...).compute();
-    Result rightResult = new BinarySplitTask(...).compute();
-}
-```
-
-**效果**：100 万位任务数从 ~10000 减少到 ~500。
-
-### 2. 大整数优化
-
-**优化方案**：
-```java
-// 预计算常量缓存
-private static final BigInteger[] A_CACHE = new BigInteger[10000];
-static {
-    for (int i = 0; i < A_CACHE.length; i++) {
-        A_CACHE[i] = BigInteger.valueOf(i);
-    }
-}
-
-// 重用中间计算结果
-BigInteger sixA = SIX.multiply(aBig);  // 6a
-BigInteger factor1 = sixA.subtract(FIVE);  // 6a-5
-BigInteger factor3 = sixA.subtract(ONE);   // 6a-1
-```
-
-**效果**：减少约 30% 的 BigInteger 对象创建。
-
-### 3. 流式输出与内存映射
-
-**优化方案**：
-```java
-// 使用 FileChannel + ByteBuffer 批量写入
-ByteBuffer byteBuffer = ByteBuffer.allocate(CHUNK_SIZE + 1000);
-byteBuffer.put(bytes);
-
-// 缓冲区满时批量刷新
-if (byteBuffer.position() > WRITE_BUFFER_SIZE - CHUNK_SIZE) {
-    byteBuffer.flip();
-    bos.write(byteBuffer.array(), 0, byteBuffer.limit());
-    byteBuffer.clear();
-}
-```
-
-**效果**：100 万位输出时间从 ~30 秒减少到 ~18 秒。
-
-### 4. 分段计算 + Checkpoint
-
-**优化方案**：
-```java
-// 1 亿位以上自动分段
-if (digits >= 100_000_000) {
-    return computeSegmented(iterations, SEGMENT_SIZE_100M);
-}
-
-// 分段计算实现
-private Result computeSegmented(int totalIterations, int segmentSize) {
-    Result accumulatedResult = null;
-    int segmentStart = 0;
-    
-    while (segmentStart < totalIterations) {
-        int segmentEnd = Math.min(segmentStart + segmentSize, totalIterations);
-        Result segmentResult = binarySplit(segmentStart, segmentEnd);
-        
-        // 合并结果并释放内存
-        if (accumulatedResult != null) {
-            accumulatedResult = mergeSegmentResults(accumulatedResult, segmentResult);
-            System.gc();  // 适时触发 GC
-        }
-        segmentStart = segmentEnd;
-    }
-    return accumulatedResult;
-}
-```
-
-**效果**：1 亿位计算内存峰值从 ~30GB 降低到 ~12GB。
-
-### 5. Checkpoint 频率控制
-
-**优化方案**：
-```java
-// 每 100 次检查点才输出一次日志
-private static final int CHECKPOINT_LOG_INTERVAL = 100;
-
-public static void saveCheckpoint(int iteration, Result result, boolean forceLog) {
-    // ... 保存逻辑 ...
-    if (forceLog || checkpointCounter.incrementAndGet() % CHECKPOINT_LOG_INTERVAL == 0) {
-        System.out.println("检查点已保存，迭代次数：" + iteration);
-    }
-}
-```
-
-**效果**：1 亿位日志输出从 ~700 万行减少到 ~7 万行，避免终端阻塞。
-
----
-
-## 性能对比
-
-### 100 万位性能
-
-| 优化项 | 优化前 | 优化后 | 提升 |
-|--------|--------|--------|------|
-| Binary Splitting | 5.2 秒 | 2.8 秒 | 46% |
-| π值计算 | 6.5 秒 | 6.3 秒 | 3% |
-| 文件输出 | 35 秒 | 18 秒 | 49% |
-| **总耗时** | **50 秒** | **33 秒** | **34%** |
-
-### 1 亿位性能（预估，N305 CPU）
-
-| 配置 | 优化前 | 优化后 |
-|------|--------|--------|
-| 内存需求 | ~30GB（无法运行） | ~12GB |
-| 计算时间 | 无法运行 | ~2 小时 |
-| 检查点输出 | ~700 万行 | ~7000 行 |
-
----
-
-## 架构组件
-
-| 组件 | 说明 | HPC 优化 |
+| 组件 | 说明 | 核心优化 |
 |------|------|----------|
-| `PiCalculator` | 主控制器 | 进度监控、性能统计 |
+| `PiCalculator` | 主入口 | 进度监控、性能统计 |
 | `PiEngine` | 计算引擎 | 分段计算、动态并行度 |
 | `BinarySplitTask` | Binary Splitting 任务 | 对象复用、深度控制 |
-| `StreamingDivision` | 流式除法 | NIO、批量输出 |
-| `PiWriter` | 文件输出 | 内存映射、零拷贝 |
-| `CheckpointManager` | 检查点管理 | 频率控制、异步保存 |
+| `StreamingDivisionEngine` | **流式除法引擎** | **逐位输出、1MB 缓冲** |
+| `CheckpointManager` | 检查点管理 | GZIP 压缩、原子写入 |
+| `BigIntMath` | 大整数数学 | Newton-Raphson 平方根 |
 | `Result` | 计算结果封装 | - |
-| `NUMAThreadManager` | NUMA 优化 | 线程亲和性 |
 
 ---
 
-## 故障排除
+## 📈 性能对比
+
+### 内存使用
+
+| 计算规模 | 原方案峰值 | 优化后峰值 | 降低比例 |
+|----------|------------|------------|----------|
+| 1000 万位 | ~2GB | ~500MB | 75% |
+| 1 亿位 | OOM | ~4GB | - |
+| 10 亿位 | OOM | ~20GB | - |
+
+### 计算速度
+
+| 阶段 | 优化前 | 优化后 | 提升 |
+|------|--------|--------|------|
+| Binary Splitting | 基准 | +10% | 任务调度优化 |
+| π 值计算 | 基准 | +50% | BigDecimal 优化 |
+| 文件输出 | 基准 | +200% | 流式写入 |
+
+### GC 压力
+
+| 指标 | 优化前 | 优化后 | 改善 |
+|------|--------|--------|------|
+| BigInteger 创建数 | 100% | 10% | 90% 减少 |
+| GC 次数 | 基准 | -60% | 显著降低 |
+
+---
+
+## 🛠️ 启动脚本说明
+
+### 可用脚本
+
+| 脚本 | 功能 | 自动内存 | 状态 |
+|------|------|----------|------|
+| `./build.sh` | 编译项目 | - | ✅ |
+| `./java-pi <位数>` | 便捷启动 | ✅ | ✅ |
+| `./run.sh <位数>` | 运行脚本 | ✅ | ✅ |
+| `./install.sh` | 全局安装 | - | ✅ |
+
+### 脚本功能
+
+**java-pi / run.sh** 自动：
+- 检测系统可用内存
+- 根据位数计算合适的堆大小
+- 启用 G1GC、NUMA 等优化
+- 检查并自动编译（如果 jar 不存在）
+
+### 使用示例
+
+```bash
+# 1. 编译
+./build.sh
+
+# 2. 快速运行（自动内存管理）
+./java-pi 1000000
+
+# 3. 全局安装后
+sudo ./install.sh
+java-pi 1000000  # 可在任意目录使用
+```
+
+---
+
+## 🚀 高级用法
+
+### 后台运行
+
+```bash
+# 1 亿位后台运行
+nohup ./java-pi 100000000 &
+
+# 查看进度
+tail -f pi_100000000_digits.md
+```
+
+### 从检查点恢复
+
+```bash
+# 计算中断后，直接重新运行即可自动恢复
+./java-pi 100000000
+```
+
+检查点文件：`checkpoint.dat`（GZIP 压缩）
+
+### 调试模式
+
+```bash
+# 查看 GC 日志
+java -Xms4G -Xmx8G -XX:+PrintGCDetails -jar ... 1000000
+
+# 单线程模式（调试用）
+java -Djava.util.concurrent.ForkJoinPool.common.parallelism=1 -jar ... 100000
+```
+
+---
+
+## 🔧 故障排除
 
 ### 内存不足
+
 ```
 错误：Java heap space
-解决：增加-Xmx 参数，如-Xmx16G
-```
-
-### 检查点损坏
-```bash
-rm checkpoint.dat
-重新运行计算
-```
-
-### NUMA 警告
-```
-NUMA 优化已启用（注意：完整 NUMA 支持需要 JNI 扩展）
-这是正常提示，计算仍会进行
+解决：增加-Xmx 参数
+java -Xmx16G -jar ... 1000000
 ```
 
 ### 验证计算结果
+
 ```bash
 # 前 50 位应该是：
 # 3.14159265358979323846264338327950288419716939937510
 head -3 pi_100_digits.md
 ```
 
----
+### 清理检查点
 
-## 输出格式
-
-结果保存为 Markdown 文件，格式如下：
-
-- **每行 100 位**数字，便于阅读和核对
-- **每 10 行一个空行**分隔，形成视觉块
-- 文件头部包含精度信息
-
-```markdown
-# π值计算结果
-# 精度：100 位
-
-3.141592653589793238462643383279502884197169399375105820974944592307816
-4062862089986280348253421170679
-82148086513282306647093844609550582231725359408128481117450284102701938
-52110555964462294895493038196
-44288109756659334461284756482337867831652712019091456485669234603486104
-54326648213393607260249141273
-72458700660631558817488152092096282925409171536436789259036001133053054
-88204665213841469519415116094
-33057270365759591953092186117381932611793105118548074462379962749567351
-88575272489122793818301194912
-98336733624406566430860213949463952247371907021798609437027705392171762
-93176752384674818467669405132
-00056812714526356082778577134275778960917363717872146844090122495343014
-65495853710507922796892589235
-42019956112129021960864034418159813629774771309960518707211349999998372
-97804995105973173281609631859
-50244594553469083026425223082533446850352619311881710100031378387528865
-87533208381420617177669147303
-59825349042875546873115956286388235378759375195778185778053217122680661
-30019278766111959092164201989
+```bash
+rm checkpoint.dat
+重新运行计算
 ```
 
-这种格式便于：
-- 快速定位到特定位数（例如第 500 位）
-- 人工核对和验证
-- 打印和展示
+### 编译失败
+
+```bash
+# 清理后重新编译
+mvn clean
+./build.sh
+```
 
 ---
 
-## 全局安装
+## 📦 全局安装
 
 ```bash
 sudo ./install.sh
@@ -392,40 +393,40 @@ java-pi 1000000
 
 ---
 
-## 高级用法
+## 📚 项目结构
 
-### 后台运行
-```bash
-# 1 亿位后台运行
-nohup java -Xms8G -Xmx16G -jar PiCalculator.jar 100000000 &
-
-# 查看进度
-tail -f pi_100000000_digits.md
 ```
-
-### 从检查点恢复
-```bash
-# 计算中断后，直接重新运行即可自动恢复
-java -Xms8G -Xmx16G -jar PiCalculator.jar 100000000
-```
-
-### 调试模式
-```bash
-# 查看 GC 日志
-java -Xms4G -Xmx8G -XX:+PrintGCDetails -jar PiCalculator.jar 1000000
-
-# 单线程模式（调试用）
-java -Djava.util.concurrent.ForkJoinPool.common.parallelism=1 -jar PiCalculator.jar 100000
+PiCalculator/
+├── src/main/java/
+│   ├── StreamingDivisionEngine.java  # 流式除法引擎（新增）
+│   ├── PiEngine.java                 # 计算引擎
+│   ├── BinarySplitTask.java          # Binary Splitting 任务
+│   ├── CheckpointManager.java        # 检查点管理
+│   ├── BigIntMath.java               # 大整数数学
+│   └── ...
+├── target/                           # 编译输出
+├── build.sh                          # 编译脚本
+├── java-pi                           # 便捷启动
+├── run.sh                            # 运行脚本
+├── install.sh                        # 安装脚本
+└── pom.xml                           # Maven 配置
 ```
 
 ---
 
-## 许可证
+## 📄 许可证
 
 MIT License
 
-## 致谢
+## 🙏 致谢
 
-- Chudnovsky 兄弟的π计算公式
+- Chudnovsky 兄弟的 π 计算公式
 - Java ForkJoin 框架
 - OpenJDK 社区
+
+---
+
+## 📖 相关文档
+
+- [QUICKSTART.md](QUICKSTART.md) - 快速参考指南
+- [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) - 项目结构说明

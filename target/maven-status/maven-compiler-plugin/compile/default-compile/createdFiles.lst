@@ -7,6 +7,7 @@ SystemMonitor.class
 CheckpointManager.class
 PiWriter.class
 CheckpointManager$CheckpointData.class
+StreamingDivisionEngine.class
 Main.class
 StreamingDivision.class
 PiCalculator.class
