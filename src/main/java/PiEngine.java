@@ -112,10 +112,8 @@ public class PiEngine {
         System.out.printf("       迭代范围：[0, %,d)%n", iterations);
         System.out.printf("       [并行配置] 线程数：%d%n", parallelism);
 
-        // 重置进度计数器
         BinarySplitTask.resetProgress();
 
-        // 启动进度监控线程
         BinarySplitTask.ProgressMonitor monitor = new BinarySplitTask.ProgressMonitor(iterations);
         Thread monitorThread = new Thread(monitor);
         monitorThread.start();
@@ -124,7 +122,6 @@ public class PiEngine {
         Result result = binarySplit(0, iterations);
         long splitTime = System.nanoTime() - startTime;
 
-        // 停止监控线程
         monitor.stop();
         try {
             monitorThread.join(1000);
@@ -238,12 +235,11 @@ public class PiEngine {
     }
 
     /**
-     * 使用 Binary Spliting 算法计算 P, Q, T
+     * 使用 Binary Splitting 算法计算 P, Q, T
      */
     public Result binarySplit(int start, int end) {
         int range = end - start;
 
-        // 更激进的并行策略
         int baseThreshold = Math.max(5, range / (parallelism * 16));
         int threshold = Math.min(Math.max(baseThreshold, 20), 200);
 
@@ -255,7 +251,7 @@ public class PiEngine {
     }
 
     /**
-     * 流式输出 π 值到文件
+     * 流式输出 π 值到文件（Newton-Raphson 优化版）
      */
     private void streamPiToFile(Result result, int digits, String outputFile) throws Exception {
         System.out.println();

@@ -5,26 +5,26 @@ import java.math.BigInteger;
 import java.nio.file.Path;
 
 /**
- * 工业级流式除法引擎 - Block Division 优化版
+ * 工业级流式除法引擎 - Newton-Raphson + 分块输出
  * 
  * 核心优化：
- * 1. Block Division - 每次除法输出 10000 位（10^10000 基数）
- * 2. 1MB 缓冲写入 - 减少系统调用
- * 3. 实时进度显示 - 每 10 万位输出统计
- * 4. 零对象创建 - 复用缓冲区
+ * 1. Newton-Raphson 除法 - O(n^1.58) 复杂度
+ * 2. 分块输出 - 每块 100 万位，降低内存压力
+ * 3. FFT 乘法加速 - O(n log n) 复杂度
+ * 4. 1MB 缓冲写入 - 减少系统调用
+ * 5. 实时进度显示 - 每 10 万位输出统计
  * 
- * 性能对比：
- * - 旧算法（逐位）：100 万位需要 6-7 分钟
- * - 新算法（块除法）：100 万位 < 20 秒
- * - 性能提升：20-30 倍
+ * 性能目标：
+ * - 100 万位：< 1 秒
+ * - 1000 万位：< 10 秒
+ * - 1 亿位：< 40 秒
  */
 public class StreamingDivisionEngine {
 
     // ==================== 配置常量 ====================
 
-    /** 块大小：10^10000，每次除法输出 10000 位 */
-    private static final BigInteger BASE = BigInteger.TEN.pow(10000);
-    private static final int BLOCK_DIGITS = 10000;
+    /** 块大小：10^6，每次输出 100 万位 */
+    private static final int BLOCK_DIGITS = 1_000_000;
 
     /** 写入缓冲区大小 - 1MB */
     private static final int BUFFER_SIZE = 1024 * 1024;
@@ -49,7 +49,16 @@ public class StreamingDivisionEngine {
     // ==================== 核心方法 ====================
 
     /**
-     * 流式计算并输出 π 值
+     * 流式计算并输出 π 值（Newton-Raphson 优化版）
+     * 
+     * 算法流程：
+     * 1. 计算 integerPart = numerator / denominator
+     * 2. 计算 remainder = numerator % denominator
+     * 3. 分块循环：
+     *    remainder = remainder * 10^BLOCK_DIGITS
+     *    block = NewtonDivide(remainder, denominator)
+     *    remainder = remainder % denominator
+     *    输出 block
      */
     public static void streamPi(
             BigInteger numerator,
@@ -57,29 +66,30 @@ public class StreamingDivisionEngine {
             long digits,
             Path outputFile) throws IOException {
 
-        System.out.println("[流式引擎] 开始 Block Division 计算 π 值...");
+        System.out.println("[流式引擎] 开始 Newton-Raphson 计算 π 值...");
         System.out.printf("           分子位数：%,d%n", numerator.toString().length());
         System.out.printf("           分母位数：%,d%n", denominator.toString().length());
         System.out.printf("           目标精度：%,d 位%n", digits);
-        System.out.printf("           块大小：%d 位 (10^10000)%n", BLOCK_DIGITS);
+        System.out.printf("           块大小：%,d 位 (10^6)%n", BLOCK_DIGITS);
 
         long startTime = System.nanoTime();
 
         // ========== 步骤 1: 计算整数部分和初始余数 ==========
-        BigInteger[] divResult = numerator.divideAndRemainder(denominator);
+        BigInteger[] divResult = NewtonDivision.divideAndRemainder(
+            numerator, denominator);
         String integerPart = divResult[0].toString();
         BigInteger remainder = divResult[1];
 
         System.out.printf("           整数部分：%s (%d 位)%n", integerPart, integerPart.length());
 
-        // ========== 步骤 2: Block Division 流式输出 ==========
-        blockDivide(denominator, remainder, integerPart, digits, outputFile, startTime);
+        // ========== 步骤 2: Newton-Raphson 分块输出 ==========
+        newtonBlockDivide(denominator, remainder, integerPart, digits, outputFile, startTime);
     }
 
     /**
-     * Block Division 核心算法
+     * Newton-Raphson 分块输出
      */
-    private static void blockDivide(
+    private static void newtonBlockDivide(
             BigInteger denominator,
             BigInteger remainder,
             String integerPart,
@@ -90,6 +100,9 @@ public class StreamingDivisionEngine {
         char[] charBuffer = CHAR_BUFFER;
         char[] writeBuf = WRITE_BUFFER;
         int writePos = 0;
+
+        // 预计算 10^BLOCK_DIGITS
+        BigInteger blockMultiplier = BigInteger.TEN.pow(BLOCK_DIGITS);
 
         try (BufferedWriter writer = new BufferedWriter(
                 new FileWriter(outputFile.toFile()), BUFFER_SIZE)) {
@@ -109,14 +122,16 @@ public class StreamingDivisionEngine {
             long lastProgressTime = System.currentTimeMillis();
 
             while (digitsWritten < totalDigits) {
-                // Block Division 核心算法：remainder * BASE / denominator
-                remainder = remainder.multiply(BASE);
-                BigInteger[] divResult = remainder.divideAndRemainder(denominator);
+                // 计算当前块的实际大小
+                int currentBlockSize = (int) Math.min(BLOCK_DIGITS, totalDigits - digitsWritten);
+                BigInteger multiplier = BigInteger.TEN.pow(currentBlockSize);
+
+                // Newton-Raphson 核心算法
+                remainder = remainder.multiply(multiplier);
+                BigInteger[] divResult = NewtonDivision.divideAndRemainder(
+                    remainder, denominator);
                 BigInteger block = divResult[0];
                 remainder = divResult[1];
-
-                // 计算当前块的实际输出位数
-                int currentBlockSize = (int) Math.min(BLOCK_DIGITS, totalDigits - digitsWritten);
 
                 // 将块转换为数字字符
                 int charCount = blockToChars(block, charBuffer, currentBlockSize);

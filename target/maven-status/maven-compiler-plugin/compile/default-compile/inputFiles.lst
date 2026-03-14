@@ -1,6 +1,7 @@
 /home/tortb/project/PiCalculator/src/main/java/PiWriter.java
 /home/tortb/project/PiCalculator/src/main/java/BinarySplitTask.java
 /home/tortb/project/PiCalculator/src/main/java/PiCalculator.java
+/home/tortb/project/PiCalculator/src/main/java/FFTBigInteger.java
 /home/tortb/project/PiCalculator/src/main/java/CheckpointManager.java
 /home/tortb/project/PiCalculator/src/main/java/PiEngine.java
 /home/tortb/project/PiCalculator/src/main/java/ProgressMonitor.java
@@ -11,3 +12,4 @@
 /home/tortb/project/PiCalculator/src/main/java/NUMAThreadManager.java
 /home/tortb/project/PiCalculator/src/main/java/BigIntMath.java
 /home/tortb/project/PiCalculator/src/main/java/Main.java
+/home/tortb/project/PiCalculator/src/main/java/NewtonDivision.java

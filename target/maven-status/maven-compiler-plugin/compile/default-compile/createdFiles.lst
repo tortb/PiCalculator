@@ -11,5 +11,7 @@ CheckpointManager$CheckpointData.class
 StreamingDivisionEngine.class
 Main.class
 StreamingDivision.class
+FFTBigInteger.class
+NewtonDivision.class
 PiCalculator.class
 Result.class
