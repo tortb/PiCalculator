@@ -5,26 +5,29 @@ import java.math.BigInteger;
 import java.nio.file.Path;
 
 /**
- * 工业级流式除法引擎 - Block Division 优化版
+ * 工业级流式除法引擎 - Block Division 优化版 (10^100000)
  * 
  * 核心优化：
- * 1. Block Division - 每次除法输出 50000 位（10^50000 基数）
- * 2. Newton-Raphson 除法 - O(n^1.58) 复杂度
+ * 1. Block Division - 每次除法输出 100000 位（10^100000 基数）
+ * 2. Newton-Raphson 除法 - O(n^1.58) 复杂度（除数>10000 位时启用）
  * 3. 分治 toString - O(n log n) 转换
- * 4. 1MB 缓冲写入 - 减少系统调用
+ * 4. 2MB 缓冲写入 - 减少系统调用
  * 5. 实时进度显示 - 每 10 万位输出统计
  * 
  * 性能目标：
- * - 100 万位：< 10 秒
+ * - 100 万位：< 8 秒
  * - 1000 万位：< 1 分钟
  * - 1 亿位：< 5 分钟
+ * 
+ * @author HPC Pi Calculator Team
+ * @version 3.0-HPC
  */
 public class StreamingDivisionEngine {
 
     // ==================== 配置常量 ====================
 
-    /** 块大小：10^50000，每次除法输出 50000 位 */
-    private static final int BLOCK_DIGITS = 50_000;
+    /** 块大小：10^100000，每次除法输出 100000 位 */
+    private static final int BLOCK_DIGITS = 100_000;
 
     /** 写入缓冲区大小 - 2MB */
     private static final int BUFFER_SIZE = 2 * 1024 * 1024;
@@ -46,10 +49,12 @@ public class StreamingDivisionEngine {
     // ==================== 可复用缓冲区 ====================
 
     /** 数字字符缓冲区 */
-    private static final char[] CHAR_BUFFER = new char[BLOCK_DIGITS + 10];
+    private static final ThreadLocal<char[]> CHAR_BUFFER =
+        ThreadLocal.withInitial(() -> new char[BLOCK_DIGITS + 10]);
 
     /** 写入缓冲区 */
-    private static final char[] WRITE_BUFFER = new char[BUFFER_SIZE];
+    private static final ThreadLocal<char[]> WRITE_BUFFER =
+        ThreadLocal.withInitial(() -> new char[BUFFER_SIZE]);
 
     // ==================== 核心方法 ====================
 
@@ -63,7 +68,12 @@ public class StreamingDivisionEngine {
      *    remainder = remainder * 10^BLOCK_DIGITS
      *    block = NewtonDivide(remainder, denominator)
      *    remainder = remainder % denominator
-     *    输出 block（50000 位）
+     *    输出 block（100000 位）
+     * 
+     * @param numerator 分子（426880 * sqrt(10005) * Q）
+     * @param denominator 分母（T）
+     * @param digits 目标精度（位数）
+     * @param outputFile 输出文件路径
      */
     public static void streamPi(
             BigInteger numerator,
@@ -75,7 +85,8 @@ public class StreamingDivisionEngine {
         System.out.printf("           分子位数：%,d%n", numerator.toString().length());
         System.out.printf("           分母位数：%,d%n", denominator.toString().length());
         System.out.printf("           目标精度：%,d 位%n", digits);
-        System.out.printf("           块大小：%,d 位 (10^50000)%n", BLOCK_DIGITS);
+        System.out.printf("           块大小：%,d 位 (10^100000)%n", BLOCK_DIGITS);
+        System.out.printf("           Newton-Raphson 阈值：%,d 位%n", NewtonDivision.getDirectThreshold());
 
         long startTime = System.nanoTime();
 
@@ -92,6 +103,13 @@ public class StreamingDivisionEngine {
 
     /**
      * Newton-Raphson 分块输出
+     * 
+     * @param denominator 分母 T
+     * @param remainder 初始余数
+     * @param integerPart 整数部分
+     * @param totalDigits 总位数
+     * @param outputFile 输出文件
+     * @param startTime 开始时间
      */
     private static void newtonBlockDivide(
             BigInteger denominator,
@@ -101,8 +119,8 @@ public class StreamingDivisionEngine {
             Path outputFile,
             long startTime) throws IOException {
 
-        char[] charBuffer = CHAR_BUFFER;
-        char[] writeBuf = WRITE_BUFFER;
+        char[] charBuffer = CHAR_BUFFER.get();
+        char[] writeBuf = WRITE_BUFFER.get();
         int writePos = 0;
 
         try (BufferedWriter writer = new BufferedWriter(
@@ -193,6 +211,11 @@ public class StreamingDivisionEngine {
 
     /**
      * 将 BigInteger 块转换为字符数组（分治 toString 优化）
+     * 
+     * @param block 块值
+     * @param buffer 输出缓冲区
+     * @param expectedLength 期望长度
+     * @return 实际字符数
      */
     private static int blockToChars(BigInteger block, char[] buffer, int expectedLength) {
         String blockStr = BigIntegerToString.toString(block);
@@ -216,6 +239,11 @@ public class StreamingDivisionEngine {
 
     /**
      * 打印进度信息
+     * 
+     * @param digitsWritten 已输出位数
+     * @param totalDigits 总位数
+     * @param startTimeNanos 开始时间（纳秒）
+     * @param lastProgressTime 上次进度时间（毫秒）
      */
     private static void printProgress(long digitsWritten, long totalDigits, 
                                       long startTimeNanos, long lastProgressTime) {
@@ -236,6 +264,9 @@ public class StreamingDivisionEngine {
 
     /**
      * 格式化剩余时间
+     * 
+     * @param seconds 剩余秒数
+     * @return 格式化后的时间字符串
      */
     private static String formatRemainingTime(double seconds) {
         if (seconds < 60) {
@@ -250,5 +281,23 @@ public class StreamingDivisionEngine {
             long secs = (long) (seconds % 60);
             return String.format("%d 小时 %d 分 %d 秒", hours, mins, secs);
         }
+    }
+
+    /**
+     * 获取当前块大小
+     * 
+     * @return 块大小（位数）
+     */
+    public static int getBlockDigits() {
+        return BLOCK_DIGITS;
+    }
+
+    /**
+     * 获取缓冲区大小
+     * 
+     * @return 缓冲区大小（字节）
+     */
+    public static int getBufferSize() {
+        return BUFFER_SIZE;
     }
 }

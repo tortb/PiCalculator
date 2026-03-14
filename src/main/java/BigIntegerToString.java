@@ -12,16 +12,19 @@ import java.math.BigInteger;
  * - 原生 toString()：O(n²)
  * - 分治 toString()：O(n log n)
  * - 性能提升：5-10 倍（百万位以上）
+ * 
+ * @author HPC Pi Calculator Team
+ * @version 3.0-HPC
  */
 public class BigIntegerToString {
 
     // ==================== 配置常量 ====================
 
-    /** 直接使用原生 toString 的阈值 */
-    private static final int DIRECT_THRESHOLD = 1000;
+    /** 直接使用原生 toString 的阈值（位） */
+    private static final int DIRECT_THRESHOLD = 2000;
 
     /** 分块大小（十进制位数） */
-    private static final int CHUNK_SIZE = 1000;
+    private static final int CHUNK_SIZE = 2000;
 
     // ==================== 预计算常量 ====================
 
@@ -70,7 +73,10 @@ public class BigIntegerToString {
     }
 
     /**
-     * 分治转换核心算法
+     * 分治转换核心算法（递归）
+     * 
+     * @param num 要转换的大整数
+     * @return 十进制字符串
      */
     private static String divideAndConquerToString(BigInteger num) {
         // 递归终止条件
@@ -93,6 +99,10 @@ public class BigIntegerToString {
 
     /**
      * 用零填充字符串到指定长度
+     * 
+     * @param str 原始字符串
+     * @param length 目标长度
+     * @return 填充后的字符串
      */
     private static String padWithZeros(String str, int length) {
         if (str.length() >= length) {
@@ -109,6 +119,10 @@ public class BigIntegerToString {
 
     /**
      * 快速转换（用于已知位数的场景）
+     * 
+     * @param num 要转换的大整数
+     * @param expectedDigits 期望位数
+     * @return 填充后的字符串
      */
     public static String fastToString(BigInteger num, int expectedDigits) {
         if (num.signum() == 0) {
@@ -124,18 +138,12 @@ public class BigIntegerToString {
     }
 
     /**
-     * 批量转换（优化缓存）
-     */
-    public static String[] toStringArray(BigInteger[] numbers) {
-        String[] results = new String[numbers.length];
-        for (int i = 0; i < numbers.length; i++) {
-            results[i] = toString(numbers[i]);
-        }
-        return results;
-    }
-
-    /**
      * 转换并写入缓冲区（零拷贝优化）
+     * 
+     * @param num 要转换的大整数
+     * @param buffer 目标缓冲区
+     * @param offset 起始偏移
+     * @return 写入的字符数
      */
     public static int writeToBuffer(BigInteger num, char[] buffer, int offset) {
         String str = toString(num);
@@ -143,5 +151,19 @@ public class BigIntegerToString {
             buffer[offset + i] = str.charAt(i);
         }
         return str.length();
+    }
+
+    /**
+     * 批量转换（优化缓存）
+     * 
+     * @param numbers 大整数数组
+     * @return 字符串数组
+     */
+    public static String[] toStringArray(BigInteger[] numbers) {
+        String[] results = new String[numbers.length];
+        for (int i = 0; i < numbers.length; i++) {
+            results[i] = toString(numbers[i]);
+        }
+        return results;
     }
 }
