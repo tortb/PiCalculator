@@ -5,29 +5,29 @@ import java.math.BigInteger;
 import java.nio.file.Path;
 
 /**
- * 工业级流式除法引擎 - Newton-Raphson + 分块输出
+ * 工业级流式除法引擎 - Block Division 优化版
  * 
  * 核心优化：
- * 1. Newton-Raphson 除法 - O(n^1.58) 复杂度
- * 2. 分块输出 - 每块 100 万位，降低内存压力
- * 3. FFT 乘法加速 - O(n log n) 复杂度
+ * 1. Block Division - 每次除法输出 50000 位（10^50000 基数）
+ * 2. Newton-Raphson 除法 - O(n^1.58) 复杂度
+ * 3. 分治 toString - O(n log n) 转换
  * 4. 1MB 缓冲写入 - 减少系统调用
  * 5. 实时进度显示 - 每 10 万位输出统计
  * 
  * 性能目标：
- * - 100 万位：< 1 秒
- * - 1000 万位：< 10 秒
- * - 1 亿位：< 40 秒
+ * - 100 万位：< 10 秒
+ * - 1000 万位：< 1 分钟
+ * - 1 亿位：< 5 分钟
  */
 public class StreamingDivisionEngine {
 
     // ==================== 配置常量 ====================
 
-    /** 块大小：10^6，每次输出 100 万位 */
-    private static final int BLOCK_DIGITS = 1_000_000;
+    /** 块大小：10^50000，每次除法输出 50000 位 */
+    private static final int BLOCK_DIGITS = 50_000;
 
-    /** 写入缓冲区大小 - 1MB */
-    private static final int BUFFER_SIZE = 1024 * 1024;
+    /** 写入缓冲区大小 - 2MB */
+    private static final int BUFFER_SIZE = 2 * 1024 * 1024;
 
     /** 进度显示间隔 - 每 10 万位 */
     private static final int PROGRESS_INTERVAL = 100_000;
@@ -37,6 +37,11 @@ public class StreamingDivisionEngine {
 
     /** 每多少行插入一个空行 */
     private static final int LINES_PER_BLOCK = 10;
+
+    // ==================== 预计算常量 ====================
+
+    /** 10^BLOCK_DIGITS */
+    private static final BigInteger BLOCK_MULTIPLIER = BigInteger.TEN.pow(BLOCK_DIGITS);
 
     // ==================== 可复用缓冲区 ====================
 
@@ -49,7 +54,7 @@ public class StreamingDivisionEngine {
     // ==================== 核心方法 ====================
 
     /**
-     * 流式计算并输出 π 值（Newton-Raphson 优化版）
+     * 流式计算并输出 π 值（Newton-Raphson + Block Division 优化版）
      * 
      * 算法流程：
      * 1. 计算 integerPart = numerator / denominator
@@ -58,7 +63,7 @@ public class StreamingDivisionEngine {
      *    remainder = remainder * 10^BLOCK_DIGITS
      *    block = NewtonDivide(remainder, denominator)
      *    remainder = remainder % denominator
-     *    输出 block
+     *    输出 block（50000 位）
      */
     public static void streamPi(
             BigInteger numerator,
@@ -66,18 +71,17 @@ public class StreamingDivisionEngine {
             long digits,
             Path outputFile) throws IOException {
 
-        System.out.println("[流式引擎] 开始 Newton-Raphson 计算 π 值...");
+        System.out.println("[流式引擎] 开始 Newton-Raphson + Block Division 计算 π 值...");
         System.out.printf("           分子位数：%,d%n", numerator.toString().length());
         System.out.printf("           分母位数：%,d%n", denominator.toString().length());
         System.out.printf("           目标精度：%,d 位%n", digits);
-        System.out.printf("           块大小：%,d 位 (10^6)%n", BLOCK_DIGITS);
+        System.out.printf("           块大小：%,d 位 (10^50000)%n", BLOCK_DIGITS);
 
         long startTime = System.nanoTime();
 
         // ========== 步骤 1: 计算整数部分和初始余数 ==========
-        BigInteger[] divResult = NewtonDivision.divideAndRemainder(
-            numerator, denominator);
-        String integerPart = divResult[0].toString();
+        BigInteger[] divResult = NewtonDivision.divideAndRemainder(numerator, denominator);
+        String integerPart = BigIntegerToString.toString(divResult[0]);
         BigInteger remainder = divResult[1];
 
         System.out.printf("           整数部分：%s (%d 位)%n", integerPart, integerPart.length());
@@ -100,9 +104,6 @@ public class StreamingDivisionEngine {
         char[] charBuffer = CHAR_BUFFER;
         char[] writeBuf = WRITE_BUFFER;
         int writePos = 0;
-
-        // 预计算 10^BLOCK_DIGITS
-        BigInteger blockMultiplier = BigInteger.TEN.pow(BLOCK_DIGITS);
 
         try (BufferedWriter writer = new BufferedWriter(
                 new FileWriter(outputFile.toFile()), BUFFER_SIZE)) {
@@ -128,12 +129,11 @@ public class StreamingDivisionEngine {
 
                 // Newton-Raphson 核心算法
                 remainder = remainder.multiply(multiplier);
-                BigInteger[] divResult = NewtonDivision.divideAndRemainder(
-                    remainder, denominator);
+                BigInteger[] divResult = NewtonDivision.divideAndRemainder(remainder, denominator);
                 BigInteger block = divResult[0];
                 remainder = divResult[1];
 
-                // 将块转换为数字字符
+                // 将块转换为数字字符（分治 toString 优化）
                 int charCount = blockToChars(block, charBuffer, currentBlockSize);
 
                 // 逐位写入
@@ -192,10 +192,10 @@ public class StreamingDivisionEngine {
     }
 
     /**
-     * 将 BigInteger 块转换为字符数组
+     * 将 BigInteger 块转换为字符数组（分治 toString 优化）
      */
     private static int blockToChars(BigInteger block, char[] buffer, int expectedLength) {
-        String blockStr = block.toString();
+        String blockStr = BigIntegerToString.toString(block);
         int actualLength = blockStr.length();
 
         // 计算需要补的零

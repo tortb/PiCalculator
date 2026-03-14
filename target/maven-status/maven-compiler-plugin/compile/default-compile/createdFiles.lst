@@ -14,4 +14,5 @@ StreamingDivision.class
 FFTBigInteger.class
 NewtonDivision.class
 PiCalculator.class
+BigIntegerToString.class
 Result.class

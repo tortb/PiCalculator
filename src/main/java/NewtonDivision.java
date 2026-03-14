@@ -1,21 +1,22 @@
 import java.math.BigInteger;
 
 /**
- * Newton-Raphson 除法（简化版）
+ * Newton-Raphson 除法（简化生产版）
  * 
- * 对于百万位级别，直接使用 BigInteger 原生除法
- * 对于千万位以上，使用 Newton-Raphson 优化
+ * 对于百万位级别，Java 原生除法已经高度优化
+ * 对于千万位以上，可以使用 Newton-Raphson 优化
  */
 public class NewtonDivision {
 
     /**
      * 计算带余数的除法
      * 
-     * 对于大数值，Newton-Raphson 可能不如原生除法快
-     * 因为 Java 的 BigInteger.divideAndRemainder 已经高度优化
+     * 当前实现：直接使用 BigInteger 原生除法
+     * 原因：Java 的 BigInteger.divideAndRemainder 已经高度优化
+     * 
+     * 未来优化：对于千万位以上，可以使用 Newton-Raphson
      */
-    public static BigInteger[] divideAndRemainder(BigInteger numerator, 
-                                                   BigInteger denominator) {
+    public static BigInteger[] divideAndRemainder(BigInteger numerator, BigInteger denominator) {
         return numerator.divideAndRemainder(denominator);
     }
 
