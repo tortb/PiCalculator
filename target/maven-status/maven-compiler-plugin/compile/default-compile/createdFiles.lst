@@ -5,6 +5,7 @@ PiEngine.class
 BinarySplitTask.class
 SystemMonitor.class
 CheckpointManager.class
+BinarySplitTask$ProgressMonitor.class
 PiWriter.class
 CheckpointManager$CheckpointData.class
 StreamingDivisionEngine.class
