@@ -29,10 +29,7 @@ public class StreamingDivisionEngine {
     /** 写入缓冲区大小 - 1MB */
     private static final int BUFFER_SIZE = 1024 * 1024;
 
-    /** 每 2 万位显示一次进度（让输出更频繁） */
-    private static final int PROGRESS_INTERVAL = 20_000;
-
-    /** 进度输出时间间隔（毫秒）- 至少 1 秒输出一次 */
+    /** 进度输出时间间隔（毫秒）- 每 1 秒输出一次实时进度 */
     private static final long PROGRESS_TIME_INTERVAL = 1000;
 
     /** 每行输出的位数 */
@@ -205,17 +202,14 @@ public class StreamingDivisionEngine {
                     }
                 }
 
-                // 进度显示（每 50 万位 或至少 2 秒一次）
+                // 实时进度检查（每 1 秒输出一次）
                 long currentTime = System.currentTimeMillis();
-                if (digitsWritten % PROGRESS_INTERVAL == 0 || 
-                    (currentTime - lastProgressTime) >= PROGRESS_TIME_INTERVAL) {
-                    // 刷新缓冲区确保进度准确
+                if ((currentTime - lastProgressTime) >= PROGRESS_TIME_INTERVAL) {
                     if (writePos > 0) {
                         writer.write(writeBuf, 0, writePos);
                         writePos = 0;
                     }
                     writer.flush();
-
                     printProgress(digitsWritten, totalDigits, startTime, lastProgressTime);
                     lastProgressTime = currentTime;
                 }
