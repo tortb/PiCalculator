@@ -15,4 +15,5 @@ FFTBigInteger.class
 NewtonDivision.class
 PiCalculator.class
 BigIntegerToString.class
+KaratsubaBigInteger.class
 Result.class

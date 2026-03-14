@@ -5,29 +5,30 @@ import java.math.BigInteger;
 import java.nio.file.Path;
 
 /**
- * 工业级流式除法引擎 - Block Division 优化版 (10^100000)
+ * 工业级流式除法引擎 - Block Division 优化版 (10^200000)
  * 
  * 核心优化：
- * 1. Block Division - 每次除法输出 100000 位（10^100000 基数）
- * 2. Newton-Raphson 除法 - O(n^1.58) 复杂度（除数>10000 位时启用）
- * 3. 分治 toString - O(n log n) 转换
- * 4. 2MB 缓冲写入 - 减少系统调用
- * 5. 实时进度显示 - 每 10 万位输出统计
+ * 1. Block Division - 每次除法输出 200000 位（10^200000 基数）
+ * 2. Newton-Raphson 除法 - O(n^1.58) 复杂度（阈值 10000 位）
+ * 3. Karatsuba 乘法 - O(n^1.58) 加速
+ * 4. 分治 toString - O(n log n) 转换
+ * 5. 2MB 缓冲写入 - 减少系统调用
+ * 6. 实时进度显示 - 每 10 万位输出统计
  * 
  * 性能目标：
- * - 100 万位：< 8 秒
+ * - 100 万位：< 12 秒
  * - 1000 万位：< 1 分钟
  * - 1 亿位：< 5 分钟
  * 
  * @author HPC Pi Calculator Team
- * @version 3.0-HPC
+ * @version 3.1-HPC
  */
 public class StreamingDivisionEngine {
 
     // ==================== 配置常量 ====================
 
-    /** 块大小：10^100000，每次除法输出 100000 位 */
-    private static final int BLOCK_DIGITS = 100_000;
+    /** 块大小：10^200000，每次除法输出 200000 位 */
+    private static final int BLOCK_DIGITS = 200_000;
 
     /** 写入缓冲区大小 - 2MB */
     private static final int BUFFER_SIZE = 2 * 1024 * 1024;
@@ -68,7 +69,7 @@ public class StreamingDivisionEngine {
      *    remainder = remainder * 10^BLOCK_DIGITS
      *    block = NewtonDivide(remainder, denominator)
      *    remainder = remainder % denominator
-     *    输出 block（100000 位）
+     *    输出 block（200000 位）
      * 
      * @param numerator 分子（426880 * sqrt(10005) * Q）
      * @param denominator 分母（T）
@@ -85,8 +86,9 @@ public class StreamingDivisionEngine {
         System.out.printf("           分子位数：%,d%n", numerator.toString().length());
         System.out.printf("           分母位数：%,d%n", denominator.toString().length());
         System.out.printf("           目标精度：%,d 位%n", digits);
-        System.out.printf("           块大小：%,d 位 (10^100000)%n", BLOCK_DIGITS);
+        System.out.printf("           块大小：%,d 位 (10^200000)%n", BLOCK_DIGITS);
         System.out.printf("           Newton-Raphson 阈值：%,d 位%n", NewtonDivision.getDirectThreshold());
+        System.out.printf("           Karatsuba 阈值：%,d 位%n", KaratsubaBigInteger.getKaratsubaThreshold());
 
         long startTime = System.nanoTime();
 

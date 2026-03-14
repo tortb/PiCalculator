@@ -1,40 +1,50 @@
 import java.math.BigInteger;
 
 /**
- * Newton-Raphson 除法（工业生产版）
+ * 工业级 Newton-Raphson 除法引擎（优化版）
  * 
  * 核心算法：
  * 1. Newton-Raphson 迭代计算倒数：x_{k+1} = x_k * (2 - T * x_k)
  * 2. 将除法转换为乘法：π = numerator * reciprocal
  * 3. 二次收敛，迭代次数 O(log n)
+ * 4. 配合 Karatsuba 乘法：O(n^1.58) 复杂度
  * 
- * 启用策略：
+ * 启用策略（优化版）：
  * - 除数位数 < 10000：使用原生除法（已高度优化）
  * - 除数位数 10000-50000：可选 Newton-Raphson
  * - 除数位数 > 50000：启用 Newton-Raphson（性能提升 10-20 倍）
  * 
  * 性能对比：
  * - 传统除法：O(n²)
- * - Newton-Raphson：O(n^1.58) 配合 Karatsuba
+ * - Newton-Raphson + Karatsuba：O(n^1.58)
  * - 性能提升：10-20 倍（千万位以上）
  * 
  * @author HPC Pi Calculator Team
- * @version 3.0-HPC
+ * @version 3.1-HPC
  */
 public class NewtonDivision {
 
     // ==================== 配置常量 ====================
 
-    /** 使用原生除法的阈值（位） */
-    private static final int DIRECT_THRESHOLD = 50000;
+    /** 使用原生除法的阈值（位） - 优化版降低到 10000 */
+    private static final int DIRECT_THRESHOLD = 10000;
 
     /** 初始精度（位） */
     private static final int INITIAL_PRECISION = 64;
+
+    /** 最大迭代次数 */
+    private static final int MAX_ITERATIONS = 20;
 
     // ==================== 核心方法 ====================
 
     /**
      * 使用 Newton-Raphson 方法计算除法
+     * 
+     * 算法流程：
+     * 1. 如果除数位数 < 阈值，直接使用原生除法
+     * 2. 否则计算 reciprocal = 1 / denominator（Newton-Raphson 迭代）
+     * 3. 计算 quotient = numerator * reciprocal
+     * 4. 修正结果（处理舍入误差）
      * 
      * @param numerator 分子
      * @param denominator 分母
@@ -97,10 +107,18 @@ public class NewtonDivision {
     }
 
     /**
-     * 使用 Newton-Raphson 迭代计算倒数
+     * 使用 Newton-Raphson 迭代计算倒数（优化版）
      * 
-     * 迭代公式：x_{k+1} = x_k * (2 - d * x_k)
-     * 收敛速度：每次迭代精度翻倍，O(log n) 次迭代达到 n 位精度
+     * 迭代公式：
+     * x_{k+1} = x_k * (2 - d * x_k)
+     * 
+     * 收敛速度：
+     * - 每次迭代精度翻倍
+     * - O(log n) 次迭代达到 n 位精度
+     * 
+     * 优化：
+     * - 使用 Karatsuba 乘法加速
+     * - 渐进精度提升（避免过度计算）
      * 
      * @param denominator 分母
      * @param precision 目标精度（位数）
@@ -125,7 +143,7 @@ public class NewtonDivision {
         int currentPrecision = 62;
         BigInteger two = BigInteger.valueOf(2);
         
-        while (currentPrecision < precision) {
+        for (int iteration = 0; iteration < MAX_ITERATIONS && currentPrecision < precision; iteration++) {
             // 每次迭代精度翻倍
             currentPrecision = Math.min(currentPrecision * 2, precision);
             
@@ -134,9 +152,10 @@ public class NewtonDivision {
             BigInteger mask = BigInteger.ONE.shiftLeft(maskBits).subtract(BigInteger.ONE);
             
             // x = x * (2 - d * x) / 2^currentPrecision
-            BigInteger dx = normalizedDenom.multiply(x).shiftRight(currentPrecision + 256);
+            // 使用 Karatsuba 乘法加速
+            BigInteger dx = karatsubaMultiply(normalizedDenom, x).shiftRight(currentPrecision + 256);
             BigInteger twoMinusDx = two.subtract(dx);
-            x = x.multiply(twoMinusDx).shiftRight(256);
+            x = karatsubaMultiply(x, twoMinusDx).shiftRight(256);
             
             // 应用掩码
             x = x.and(mask);
@@ -147,8 +166,24 @@ public class NewtonDivision {
     }
 
     /**
+     * Karatsuba 乘法加速（内联优化）
+     */
+    private static BigInteger karatsubaMultiply(BigInteger a, BigInteger b) {
+        int bitLength = (a.bitLength() + b.bitLength()) / 2;
+        
+        // 小数值使用原生乘法
+        if (bitLength < 1000) {
+            return a.multiply(b);
+        }
+        
+        // 大数值使用 Karatsuba
+        return KaratsubaBigInteger.multiply(a, b);
+    }
+
+    /**
      * 修正结果（处理 Newton-Raphson 的舍入误差）
-     * Newton-Raphson 可能产生 ±1 的误差
+     * 
+     * Newton-Raphson 可能产生 ±1 的误差，需要修正
      */
     private static BigInteger correctResult(BigInteger numerator, 
                                            BigInteger denominator,
@@ -170,6 +205,10 @@ public class NewtonDivision {
 
     /**
      * 快速除法（自动选择最优算法）
+     * 
+     * @param numerator 分子
+     * @param denominator 分母
+     * @return 商
      */
     public static BigInteger fastDivide(BigInteger numerator, BigInteger denominator) {
         return divide(numerator, denominator);
@@ -177,8 +216,19 @@ public class NewtonDivision {
 
     /**
      * 获取当前使用的除法阈值
+     * 
+     * @return 阈值（位）
      */
     public static int getDirectThreshold() {
         return DIRECT_THRESHOLD;
+    }
+
+    /**
+     * 获取最大迭代次数
+     * 
+     * @return 迭代次数
+     */
+    public static int getMaxIterations() {
+        return MAX_ITERATIONS;
     }
 }
